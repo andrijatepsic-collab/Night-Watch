@@ -1,0 +1,3652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>NIGHT WATCH: SECTOR 09 & SUB-LEVEL 14 — 3D Horror Survival</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #050608; color: #e5e7eb;
+      font-family: 'Inter', sans-serif;
+      touch-action: none;
+    }
+    .mono { font-family: 'Share Tech Mono', monospace; }
+    #game-canvas {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      display: block; z-index: 1;
+    }
+    /* Atmospheric CRT Scanlines & Vignette */
+    .vignette {
+      position: fixed; inset: 0; pointer-events: none; z-index: 5;
+      background: radial-gradient(circle at center, transparent 34%, rgba(0, 0, 0, 0.94) 100%);
+    }
+    .scanlines {
+      position: fixed; inset: 0; pointer-events: none; z-index: 6;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.22) 50%);
+      background-size: 100% 4px;
+      opacity: 0.45;
+    }
+    .damage-flash {
+      position: fixed; inset: 0; pointer-events: none; z-index: 25;
+      background: radial-gradient(circle at center, rgba(220, 38, 38, 0.15), rgba(185, 28, 28, 0.85));
+      opacity: 0; transition: opacity 0.15s ease-out;
+    }
+    .static-flash {
+      position: fixed; inset: 0; pointer-events: none; z-index: 24;
+      background: repeating-linear-gradient(0deg, rgba(255,255,255,0.08) 0px, rgba(0,0,0,0.2) 2px);
+      opacity: 0; transition: opacity 0.1s;
+    }
+    .toxic-flash {
+      position: fixed; inset: 0; pointer-events: none; z-index: 23;
+      background: radial-gradient(circle at center, rgba(16, 185, 129, 0.08), rgba(6, 78, 59, 0.72));
+      opacity: 0; transition: opacity 0.3s;
+    }
+    @keyframes pulseRed {
+      0%, 100% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 24px rgba(239, 68, 68, 0.9); }
+    }
+    .danger-pulse { animation: pulseRed 1.1s infinite; }
+    @keyframes flickerText {
+      0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; }
+      20%, 24%, 55% { opacity: 0.35; }
+    }
+    .horror-flicker { animation: flickerText 4.5s infinite; }
+  </style>
+</head>
+<body>
+  <!-- 3D Viewport -->
+  <canvas id="game-canvas"></canvas>
+  <div class="vignette"></div>
+  <div class="scanlines"></div>
+  <div id="damage-overlay" class="damage-flash"></div>
+  <div id="static-overlay" class="static-flash"></div>
+  <div id="toxic-overlay" class="toxic-flash"></div>
+
+  <!-- Toast / Alert Banner -->
+  <div id="toast-banner" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-lg bg-zinc-900/95 border border-red-500/60 text-red-200 mono text-sm tracking-wider shadow-2xl opacity-0 pointer-events-none transition-all duration-200">
+    SYSTEM ALERT
+  </div>
+
+  <!-- Mask & Boss Struggle Overlays -->
+  <div id="mask-overlay" class="fixed inset-0 pointer-events-none z-15 hidden" style="box-shadow: inset 0 0 90px 45px rgba(0,0,0,0.96); border: 18px solid rgba(12,14,18,0.92);">
+    <div id="mask-overlay-label" class="absolute top-20 left-1/2 -translate-x-1/2 px-3 py-1 rounded bg-black/80 border border-zinc-700 text-[11px] mono text-zinc-300 tracking-widest">
+      🎭 MASK EQUIPPED — BREATHING MUFFLED
+    </div>
+  </div>
+  <div id="boss-struggle-ui" class="fixed top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 z-25 hidden pointer-events-none text-center bg-red-950/90 border-2 border-red-500 rounded-2xl px-6 py-4 shadow-2xl danger-pulse">
+    <div id="boss-struggle-title" class="text-xs mono text-red-200 tracking-widest uppercase">OVERLORD GRAB!</div>
+    <div id="boss-struggle-count" class="text-2xl sm:text-3xl font-extrabold text-white mono mt-1">CLICK 10 TIMES! (3.0s)</div>
+  </div>
+
+  <!-- IN-GAME HUD -->
+  <div id="hud-layer" class="fixed inset-0 z-10 pointer-events-none hidden flex flex-col justify-between p-3 sm:p-5">
+    <!-- Top Bar: Lives, Timer, Party Info, Audio -->
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <!-- Lives & Night Status -->
+      <div class="bg-zinc-950/85 backdrop-blur-md border border-zinc-800 rounded-xl p-3 shadow-lg pointer-events-auto">
+        <div class="flex items-center gap-3">
+          <div class="text-xs uppercase tracking-widest text-zinc-400 mono" id="lives-label">LIVES</div>
+          <div id="lives-container" class="flex items-center gap-1.5"></div>
+          <span id="hud-chapter-pill" class="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-[10px] mono text-zinc-300">CH.1</span>
+        </div>
+        <div class="mt-2 flex flex-wrap items-center gap-3 text-xs mono text-zinc-300">
+          <span>TIME: <strong id="hud-timer" class="text-amber-400">00:00</strong></span>
+          <span>REPELLED: <strong id="hud-repelled" class="text-emerald-400">0</strong></span>
+          <span id="hud-power-badge" class="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-600/40 text-emerald-300">POWER: OK</span>
+          <span id="hud-pressure-badge" class="hidden px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300">PRESSURE: 100%</span>
+        </div>
+      </div>
+
+      <!-- Center Quick View / Look Controls -->
+      <div class="flex items-center gap-1.5 bg-zinc-950/80 backdrop-blur-md border border-zinc-800 rounded-xl p-1.5 pointer-events-auto">
+        <button data-look="left" class="look-btn px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-xs mono text-zinc-200 border border-zinc-700/70 transition">◀ LEFT [A]</button>
+        <button data-look="front" class="look-btn px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-xs mono text-zinc-200 border border-zinc-700/70 transition">▲ FRONT [W]</button>
+        <button data-look="down" class="look-btn px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-xs mono text-emerald-300 border border-emerald-700/50 transition">⏷ DOWN [S]</button>
+        <button data-look="up" class="look-btn px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-xs mono text-amber-300 border border-amber-700/50 transition">⏶ CEILING [Q]</button>
+        <button data-look="right" class="look-btn px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-xs mono text-zinc-200 border border-zinc-700/70 transition">RIGHT [D] ▶</button>
+      </div>
+
+      <!-- Right: Multiplayer Squad & Audio -->
+      <div class="flex items-start gap-2 pointer-events-auto">
+        <div id="hud-party-box" class="hidden bg-zinc-950/85 backdrop-blur-md border border-indigo-500/40 rounded-xl p-2.5 text-xs mono">
+          <div class="flex items-center justify-between gap-3 border-b border-zinc-800 pb-1 mb-1.5">
+            <span class="text-indigo-300 font-bold">PARTY: <span id="hud-party-code" class="text-white">-----</span></span>
+            <span class="text-zinc-400" id="hud-party-count">1/4</span>
+          </div>
+          <div id="hud-party-members" class="space-y-1 text-[11px]"></div>
+        </div>
+        <button id="btn-mute-hud" class="px-3 py-2.5 rounded-xl bg-zinc-950/85 border border-zinc-800 hover:border-zinc-600 text-xs mono text-zinc-200 shadow-lg">
+          🔊 SFX
+        </button>
+      </div>
+    </div>
+
+    <!-- Center Crosshair & Contextual Action Prompt -->
+    <div class="flex flex-col items-center justify-center my-auto">
+      <div id="crosshair" class="w-5 h-5 rounded-full border border-white/50 flex items-center justify-center transition-transform duration-100">
+        <div class="w-1 h-1 rounded-full bg-red-400"></div>
+      </div>
+      <div id="context-prompt" class="mt-2 px-3 py-1 rounded bg-black/75 border border-zinc-700/70 text-xs mono text-zinc-200 tracking-wide opacity-0 transition-opacity">
+        CLICK TO INTERACT
+      </div>
+    </div>
+
+    <!-- Bottom Bar: Door Quick-Triggers + 4-Slot Inventory -->
+    <div class="flex flex-col items-center gap-2.5">
+      <!-- Door Status & Direct Button Bar -->
+      <div class="flex items-center gap-2 sm:gap-3 bg-zinc-950/85 backdrop-blur-md border border-zinc-800 rounded-xl px-3 py-2 pointer-events-auto">
+        <button id="hud-door-left" data-door="left" class="door-hud-btn px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs mono hover:border-emerald-500 transition">
+          [Z] LEFT DOOR: <span class="text-emerald-400 font-bold">READY</span>
+        </button>
+        <button id="hud-door-front" data-door="front" class="door-hud-btn px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs mono hover:border-emerald-500 transition">
+          [X] FRONT DOOR: <span class="text-emerald-400 font-bold">READY</span>
+        </button>
+        <button id="hud-door-right" data-door="right" class="door-hud-btn px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs mono hover:border-emerald-500 transition">
+          [C] RIGHT DOOR: <span class="text-emerald-400 font-bold">READY</span>
+        </button>
+      </div>
+
+      <!-- Inventory Slots -->
+      <div class="flex flex-wrap justify-center items-center gap-2 bg-zinc-950/90 backdrop-blur-md border border-zinc-800 rounded-2xl p-2 shadow-2xl pointer-events-auto">
+        <button data-slot="0" class="inv-slot flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-amber-400 bg-zinc-900/90 transition">
+          <span class="text-xs mono px-1.5 py-0.5 rounded bg-zinc-800 text-amber-300">1</span>
+          <div class="text-left">
+            <div id="inv-slot0-title" class="text-xs font-bold text-white">FLASHLIGHT</div>
+            <div id="inv-flash-state" class="text-[10px] mono text-amber-300">BEAM: ON [F]</div>
+          </div>
+        </button>
+        <button data-slot="1" class="inv-slot flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900/60 hover:bg-zinc-900 transition">
+          <span class="text-xs mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">2</span>
+          <div class="text-left">
+            <div id="inv-slot1-title" class="text-xs font-bold text-white">TACTICAL KNIFE</div>
+            <div id="inv-slot1-sub" class="text-[10px] mono text-zinc-400">THROW AT SPIDERY/CRAWLER</div>
+          </div>
+        </button>
+        <button data-slot="2" class="inv-slot flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900/60 hover:bg-zinc-900 transition">
+          <span class="text-xs mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">3</span>
+          <div class="text-left">
+            <div id="inv-slot2-title" class="text-xs font-bold text-white">EXTINGUISHER</div>
+            <div id="inv-slot2-sub" class="text-[10px] mono text-zinc-400">HOLD CLICK ON FIRE</div>
+          </div>
+        </button>
+        <button data-slot="3" class="inv-slot flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900/60 hover:bg-zinc-900 transition">
+          <span class="text-xs mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">4</span>
+          <div class="text-left">
+            <div id="inv-slot3-title" class="text-xs font-bold text-white">HORROR MASK</div>
+            <div id="inv-mask-state" class="text-[10px] mono text-zinc-400">OFF [M / 4]</div>
+          </div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN MENU & MULTIPLAYER LOBBY OVERLAY -->
+  <div id="menu-overlay" class="fixed inset-0 z-30 overflow-y-auto flex items-start sm:items-center justify-center p-4 py-6 bg-black/75 backdrop-blur-sm">
+    <div class="w-full max-w-2xl my-auto bg-zinc-950/95 border border-zinc-800 rounded-2xl shadow-2xl overflow-y-auto max-h-[92vh]">
+      <!-- Header -->
+      <div id="menu-header-banner" class="p-6 sm:p-8 border-b border-zinc-800/90 bg-gradient-to-b from-red-950/25 to-transparent">
+        <div class="flex items-center justify-between">
+          <span id="menu-sector-tag" class="px-2.5 py-1 rounded bg-red-950/80 border border-red-700/50 text-red-400 text-xs mono tracking-widest">
+            SECTOR 09 // CONTAINMENT BREACH
+          </span>
+          <span class="text-xs mono text-zinc-500">3D WEBGL HORROR</span>
+        </div>
+        <h1 class="mt-3 text-3xl sm:text-5xl font-extrabold tracking-tight text-white horror-flicker">
+          NIGHT WATCH
+        </h1>
+        <p id="menu-sector-desc" class="mt-2 text-sm text-zinc-400">
+          Monitor the Left, Front, and Right blast door windows. Seal doors against intruders, eliminate ceiling & floor threats, and survive the Overlord Boss waves.
+        </p>
+
+        <!-- Chapter Selector Tabs -->
+        <div class="mt-4 grid grid-cols-2 gap-2 p-1 rounded-xl bg-zinc-900/90 border border-zinc-800">
+          <button id="btn-select-ch1" class="py-2 px-3 rounded-lg bg-red-950/80 border border-red-500/70 text-xs mono font-bold text-red-200 transition">
+            CHAPTER 1: SECTOR 09
+          </button>
+          <button id="btn-select-ch2" class="py-2 px-3 rounded-lg bg-transparent border border-transparent hover:bg-zinc-800/70 text-xs mono font-bold text-cyan-300 transition">
+            CHAPTER 2: SUB-LEVEL 14 🆕
+          </button>
+        </div>
+      </div>
+
+      <!-- View 1: Main Mode Selection -->
+      <div id="menu-home" class="p-6 sm:p-8 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <button id="btn-start-single" class="group text-left p-5 rounded-xl bg-zinc-900/90 hover:bg-red-950/40 border border-zinc-700 hover:border-red-500/70 transition-all shadow-lg">
+            <div class="text-xs mono text-red-400 mb-1">SOLO SURVIVAL</div>
+            <div class="text-xl font-bold text-white group-hover:text-red-200">SINGLEPLAYER</div>
+            <p class="mt-1.5 text-xs text-zinc-400">3 personal lives. Defend all 3 doors, ceiling, and reactor room alone.</p>
+          </button>
+
+          <button id="btn-open-multi" class="group text-left p-5 rounded-xl bg-zinc-900/90 hover:bg-indigo-950/40 border border-zinc-700 hover:border-indigo-500/70 transition-all shadow-lg">
+            <div class="text-xs mono text-indigo-400 mb-1">CO-OP SQUAD (MAX 4)</div>
+            <div class="text-xl font-bold text-white group-hover:text-indigo-200">MULTIPLAYER</div>
+            <p class="mt-1.5 text-xs text-zinc-400">Create or join a 5-character party code. Shared 3 Team Lives!</p>
+          </button>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <button id="btn-toggle-guide" class="px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs mono text-zinc-300">
+            📋 ENTITY & SURVIVAL MANUAL
+          </button>
+          <div class="text-xs mono text-zinc-500">
+            Drag Screen or A/W/S/D/Q to Look • Keys 1-4 Tools
+          </div>
+        </div>
+
+        <!-- Collapsible Survival Manual -->
+        <div id="survival-guide" class="hidden mt-3 p-4 rounded-xl bg-zinc-900/90 border border-zinc-800 text-xs space-y-2 text-zinc-300 max-h-56 overflow-y-auto">
+          <div id="guide-ch1-content" class="space-y-1.5">
+            <div class="font-bold text-amber-400 mono">CHAPTER 1 — DOOR PROTOCOL:</div>
+            <p>• <span class="text-emerald-400">Threat Present:</span> Seals blast door for <strong>2.0s</strong> + <strong>1.0s</strong> recharge.</p>
+            <p>• <span class="text-red-400">False Alarm (Empty Door):</span> Slams for <strong>0.5s</strong>, then locks button for <strong>5.0s</strong>!</p>
+            <div class="font-bold text-amber-400 mono pt-1">CHAPTER 1 — HOSTILES & HAZARDS:</div>
+            <p>• <strong>BEAR:</strong> Appears directly at a door window. Seal that door immediately.</p>
+            <p>• <strong>FOX:</strong> Approaches a door with a <strong>50% chance to teleport</strong> to another door mid-way.</p>
+            <p>• <strong>ROBOTICA:</strong> Charges at extreme speed down a corridor. React fast!</p>
+            <p>• <strong>BUNNY:</strong> Leaves a shadowy void trail as it dashes to a new door when blocked — must be blocked <strong>3 times</strong>!</p>
+            <p>• <strong>SPIDERY:</strong> Crawls on the ceiling. Look UP [Q], equip <strong>Knife [2]</strong>, and throw at it.</p>
+            <p>• <strong>WRAITH:</strong> Manifests inside the room! Equip <strong>Horror Mask [4 / M]</strong> immediately to hide from its gaze.</p>
+            <p>• <strong>MIMIC:</strong> Lurks at a door window. Look at its door with your <strong>Flashlight ON [1 / F]</strong> to blind it.</p>
+            <p>• <strong>CRAWLER:</strong> Scuttles across the room floor. Look DOWN [S] and throw your <strong>Knife [2]</strong> to destroy it.</p>
+            <p>• <strong>PYRO:</strong> Charges down a hallway with a volatile tank—seal its door or it triggers a massive Room Fire!</p>
+            <p>• <strong>SIREN:</strong> Charges a sonic shriek in a corridor—seal its door before it screams and causes a Blackout.</p>
+            <p>• <strong>BOSS WAVES (03:00 & 10:00):</strong> Normal entities clear out! Survive 6 Overlord Boss phases.</p>
+          </div>
+          <div id="guide-ch2-content" class="hidden space-y-1.5">
+            <div class="font-bold text-cyan-400 mono">CHAPTER 2: SUB-LEVEL 14 — DEEP REACTOR PROTOCOL:</div>
+            <p>• <span class="text-cyan-300">Hydraulic Pressure:</span> Sealing doors drains generator pressure. If pressure hits <strong>0%</strong>, all blast doors blow open for 5s!</p>
+            <p>• <strong>[1] UV FLASHLIGHT:</strong> Press <strong>[F]</strong> (or double-tap slot 1) to fire a <strong>UV Overcharge Pulse</strong> that vaporizes Leech Swarms & Shadow Stalkers.</p>
+            <p>• <strong>[2] HARPOON KNIFE:</strong> Throw at ceiling <strong>Leech Swarms</strong> or grate threats.</p>
+            <p>• <strong>[3] ARC WELDER:</strong> Hold click on <strong>Burst Coolant Pipes</strong> before the room floods, OR look DOWN <strong>[S]</strong> and weld the floor grate to shock <strong>The Angler</strong>!</p>
+            <p>• <strong>[4] REBREATHER MASK [M / 4]:</strong> Protects against <strong>Toxic Gas Leaks</strong> and fools Doppelgängers.</p>
+            <p>• <strong>THE ARCHITECT BOSS (03:00 & 10:00):</strong> Sabotages inventory slots (weld the sparking reactor box to restore), floods the floor, and triggers fake door alarms!</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- View 2: Multiplayer Party Lobby -->
+      <div id="menu-multiplayer" class="hidden p-6 sm:p-8 space-y-5">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-xl font-bold text-white mono">MULTIPLAYER PARTY LOBBY</h2>
+            <div id="mp-chapter-badge" class="text-[11px] mono text-red-400">MISSION: CHAPTER 1 — SECTOR 09</div>
+          </div>
+          <button id="btn-back-home" class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs mono text-zinc-300 hover:text-white">
+            ← BACK
+          </button>
+        </div>
+
+        <!-- Callsign Input -->
+        <div>
+          <label class="block text-xs mono text-zinc-400 mb-1">OPERATOR CALLSIGN</label>
+          <input id="mp-player-name" type="text" maxlength="14" value="GUARD-01"
+            class="w-full px-3.5 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-white mono text-sm focus:outline-none focus:border-indigo-500" />
+        </div>
+
+        <!-- Create or Join Controls -->
+        <div id="mp-setup-panel" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="p-4 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-3">
+            <div class="text-xs mono text-indigo-400">HOST NEW SQUAD</div>
+            <p class="text-xs text-zinc-400">Generate a 5-character party code for up to 4 players.</p>
+            <button id="btn-create-party" class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs mono tracking-wider transition">
+              CREATE PARTY
+            </button>
+          </div>
+
+          <div class="p-4 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-3">
+            <div class="text-xs mono text-emerald-400">JOIN EXISTING SQUAD</div>
+            <input id="mp-join-code" type="text" maxlength="5" placeholder="CODE (e.g. 6FD1H)"
+              class="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-center text-white mono uppercase tracking-widest text-sm focus:outline-none focus:border-emerald-500" />
+            <button id="btn-join-party" class="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs mono tracking-wider transition">
+              JOIN PARTY
+            </button>
+          </div>
+        </div>
+
+        <!-- Active Lobby Room -->
+        <div id="mp-active-lobby" class="hidden p-4 rounded-xl bg-zinc-900 border border-indigo-500/50 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+            <div>
+              <div class="text-[11px] mono text-zinc-400">SHARE THIS EXACT PARTY CODE:</div>
+              <div class="flex items-center gap-2 mt-0.5">
+                <span id="lobby-code-display" class="text-2xl font-extrabold mono tracking-widest text-indigo-300">6FD1H</span>
+                <button id="btn-copy-code" class="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs mono text-zinc-200 border border-zinc-600">
+                  COPY
+                </button>
+              </div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs mono text-zinc-400">SQUAD CAPACITY</div>
+              <div id="lobby-player-count" class="text-lg font-bold mono text-white">1 / 4 PLAYERS</div>
+            </div>
+          </div>
+
+          <!-- Player Roster -->
+          <div id="lobby-roster" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2">
+            <div class="flex items-center gap-2">
+              <button id="btn-leave-party" class="px-3 py-2 rounded-lg bg-zinc-950 hover:bg-red-950/60 border border-zinc-700 hover:border-red-500/60 text-xs mono text-red-300 transition">
+                ✕ LEAVE PARTY
+              </button>
+              <button id="btn-add-bot" class="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 text-xs mono text-amber-300">
+                + ADD CO-OP AI
+              </button>
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="guest-waiting-label" class="hidden text-xs mono text-indigo-300 animate-pulse">
+                WAITING FOR HOST TO START...
+              </span>
+              <button id="btn-start-mp-game" class="px-6 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs mono tracking-wider shadow-lg">
+                START TEAM SHIFT ▶
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GAME OVER / JUMPSCARE SCREEN -->
+  <div id="gameover-overlay" class="fixed inset-0 z-40 hidden flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+    <div class="w-full max-w-md bg-zinc-950 border-2 border-red-700/80 rounded-2xl p-6 sm:p-8 text-center shadow-2xl">
+      <div class="text-xs mono text-red-500 tracking-widest uppercase">CONTAINMENT FAILURE</div>
+      <h2 id="gameover-title" class="mt-2 text-3xl sm:text-4xl font-extrabold text-white">YOU DIED</h2>
+      <p id="gameover-reason" class="mt-2 text-sm text-zinc-300 mono">Overwhelmed by Bear at Front Blast Door.</p>
+
+      <div class="mt-6 grid grid-cols-2 gap-3 p-4 rounded-xl bg-zinc-900 border border-zinc-800 mono">
+        <div>
+          <div class="text-[11px] text-zinc-400">SURVIVED</div>
+          <div id="stat-time" class="text-xl font-bold text-amber-400">00:00</div>
+        </div>
+        <div>
+          <div class="text-[11px] text-zinc-400">ENTITIES REPELLED</div>
+          <div id="stat-repelled" class="text-xl font-bold text-emerald-400">0</div>
+        </div>
+      </div>
+
+      <button id="btn-return-menu" class="mt-6 w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold mono text-sm tracking-wider transition">
+        RETURN TO COMMAND MENU
+      </button>
+    </div>
+  </div>
+
+  <!-- Optional Firebase Cloud Sync Module -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    window.CloudSync = {
+      enabled: false,
+      db: null,
+      auth: null,
+      appId: typeof __app_id !== 'undefined' ? __app_id : 'night-watch-horror',
+      async init() {
+        try {
+          if (typeof __firebase_config === 'undefined' || !__firebase_config) return;
+          const cfg = JSON.parse(__firebase_config);
+          const app = initializeApp(cfg);
+          this.auth = getAuth(app);
+          this.db = getFirestore(app);
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(this.auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(this.auth);
+          }
+          this.enabled = true;
+        } catch (err) {
+          console.warn("Cloud sync unavailable, using local/cross-tab multiplayer.", err);
+          this.enabled = false;
+        }
+      },
+      docRef(code) {
+        return doc(this.db, 'artifacts', this.appId, 'public', 'data', 'parties', code);
+      },
+      setDoc, getDoc, updateDoc, onSnapshot
+    };
+    window.CloudSyncReady = window.CloudSync.init();
+  </script>
+
+  <!-- MAIN 3D HORROR GAME ENGINE -->
+  <script>
+    (() => {
+      'use strict';
+
+      // =========================================================================
+      // 1. PROCEDURAL WEB AUDIO HORROR SYNTHESIZER
+      // =========================================================================
+      class HorrorAudio {
+        constructor() {
+          this.ctx = null;
+          this.muted = false;
+          this.droneGain = null;
+        }
+
+        init() {
+          if (this.ctx) {
+            if (this.ctx.state === 'suspended') this.ctx.resume();
+            return;
+          }
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) return;
+          this.ctx = new AudioCtx();
+          this.startAmbientDrone();
+        }
+
+        toggleMute() {
+          this.muted = !this.muted;
+          if (this.droneGain && this.ctx) {
+            this.droneGain.gain.setTargetAtTime(this.muted ? 0 : 0.085, this.ctx.currentTime, 0.1);
+          }
+          return this.muted;
+        }
+
+        startAmbientDrone() {
+          if (!this.ctx) return;
+          const osc1 = this.ctx.createOscillator();
+          const osc2 = this.ctx.createOscillator();
+          const lfo = this.ctx.createOscillator();
+          const lfoGain = this.ctx.createGain();
+          const filter = this.ctx.createBiquadFilter();
+          this.droneGain = this.ctx.createGain();
+
+          osc1.type = 'sawtooth';
+          osc1.frequency.value = 38;
+          osc2.type = 'triangle';
+          osc2.frequency.value = 55.5;
+
+          lfo.type = 'sine';
+          lfo.frequency.value = 0.22;
+          lfoGain.gain.value = 35;
+
+          filter.type = 'lowpass';
+          filter.frequency.value = 115;
+
+          this.droneGain.gain.value = this.muted ? 0 : 0.085;
+
+          lfo.connect(lfoGain);
+          lfoGain.connect(filter.frequency);
+          osc1.connect(filter);
+          osc2.connect(filter);
+          filter.connect(this.droneGain);
+          this.droneGain.connect(this.ctx.destination);
+
+          osc1.start();
+          osc2.start();
+          lfo.start();
+        }
+
+        playPhantomStinger() {
+          if (this.muted || !this.ctx) return;
+          const type = Math.random();
+          if (type < 0.4) {
+            this.playTone(140, 48, 0.22, 'triangle', 0.16);
+            setTimeout(() => this.playTone(125, 44, 0.28, 'triangle', 0.14), 260);
+          } else if (type < 0.75) {
+            this.playTone(880, 932, 0.95, 'sawtooth', 0.055);
+            this.playTone(1245, 1180, 0.95, 'sine', 0.05);
+          } else {
+            this.playNoise(0.85, 650, 0.09, 'bandpass');
+          }
+        }
+
+        playTone(freqStart, freqEnd, duration, type = 'sine', vol = 0.2) {
+          if (this.muted || !this.ctx) return;
+          const now = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freqStart, now);
+          osc.frequency.exponentialRampToValueAtTime(Math.max(10, freqEnd), now + duration);
+
+          gain.gain.setValueAtTime(vol, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + duration);
+        }
+
+        playNoise(duration, filterFreq = 800, vol = 0.25, filterType = 'bandpass') {
+          if (this.muted || !this.ctx) return;
+          const now = this.ctx.currentTime;
+          const bufferSize = Math.floor(this.ctx.sampleRate * duration);
+          const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+          }
+
+          const noise = this.ctx.createBufferSource();
+          noise.buffer = buffer;
+
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = filterType;
+          filter.frequency.value = filterFreq;
+
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(vol, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+          noise.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.ctx.destination);
+          noise.start(now);
+        }
+
+        doorSlam() {
+          this.playTone(130, 32, 0.35, 'sawtooth', 0.32);
+          this.playNoise(0.25, 320, 0.28, 'lowpass');
+        }
+
+        doorError() {
+          this.playTone(190, 140, 0.14, 'square', 0.16);
+          setTimeout(() => this.playTone(150, 110, 0.18, 'square', 0.16), 110);
+        }
+
+        entityBlocked() {
+          this.playTone(220, 90, 0.3, 'sawtooth', 0.24);
+          this.playNoise(0.2, 600, 0.18);
+        }
+
+        foxTeleport() {
+          this.playNoise(0.22, 2200, 0.22, 'highpass');
+          this.playTone(760, 220, 0.22, 'sawtooth', 0.16);
+        }
+
+        bunnyVoidDash() {
+          this.playTone(190, 52, 0.42, 'sawtooth', 0.22);
+          this.playNoise(0.35, 420, 0.2, 'bandpass');
+        }
+
+        knifeThrow() {
+          this.playNoise(0.16, 3200, 0.22, 'bandpass');
+          this.playTone(920, 420, 0.14, 'triangle', 0.14);
+        }
+
+        spiderScream() {
+          this.playTone(1250, 380, 0.48, 'sawtooth', 0.26);
+          this.playNoise(0.35, 1800, 0.2);
+        }
+
+        extinguisherHiss() {
+          this.playNoise(0.14, 2800, 0.14, 'highpass');
+        }
+
+        arcWeldBuzz() {
+          this.playTone(120, 260, 0.09, 'sawtooth', 0.16);
+          this.playNoise(0.08, 3400, 0.15, 'bandpass');
+        }
+
+        uvPulseBlast() {
+          this.playTone(980, 240, 0.45, 'sine', 0.26);
+          this.playNoise(0.35, 2600, 0.22, 'highpass');
+        }
+
+        sonarPing() {
+          this.playTone(1180, 1140, 0.35, 'sine', 0.18);
+        }
+
+        blackoutDown() {
+          this.playTone(320, 35, 0.9, 'sawtooth', 0.28);
+        }
+
+        jumpScare() {
+          this.playTone(165, 36, 0.82, 'sawtooth', 0.45);
+          this.playTone(620, 190, 0.65, 'square', 0.36);
+          this.playTone(1120, 440, 0.55, 'sawtooth', 0.25);
+          this.playNoise(0.75, 1150, 0.42, 'bandpass');
+        }
+      }
+
+      const audio = new HorrorAudio();
+
+      // =========================================================================
+      // 2. PROCEDURAL PBR TEXTURES
+      // =========================================================================
+      function createProceduralTexture(type) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext('2d');
+
+        if (type === 'floor') {
+          ctx.fillStyle = '#14171c';
+          ctx.fillRect(0, 0, 512, 512);
+          const tile = 64;
+          for (let y = 0; y < 512; y += tile) {
+            for (let x = 0; x < 512; x += tile) {
+              const v = 18 + Math.floor(Math.random() * 14);
+              ctx.fillStyle = `rgb(${v},${v + 2},${v + 5})`;
+              ctx.fillRect(x + 2, y + 2, tile - 4, tile - 4);
+              ctx.strokeStyle = '#090a0d';
+              ctx.lineWidth = 3;
+              ctx.strokeRect(x, y, tile, tile);
+            }
+          }
+          for (let i = 0; i < 2400; i++) {
+            ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.08)';
+            ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 3);
+          }
+        } else if (type === 'wall') {
+          ctx.fillStyle = '#1b1f26';
+          ctx.fillRect(0, 0, 512, 512);
+          for (let i = 0; i < 4200; i++) {
+            const g = 20 + Math.floor(Math.random() * 22);
+            ctx.fillStyle = `rgba(${g},${g + 3},${g + 7},0.35)`;
+            ctx.fillRect(Math.random() * 512, Math.random() * 512, 4, 4);
+          }
+          ctx.fillStyle = '#eab308';
+          ctx.fillRect(0, 390, 512, 34);
+          ctx.fillStyle = '#111317';
+          for (let x = -40; x < 560; x += 40) {
+            ctx.beginPath();
+            ctx.moveTo(x, 390);
+            ctx.lineTo(x + 20, 390);
+            ctx.lineTo(x + 4, 424);
+            ctx.lineTo(x - 16, 424);
+            ctx.closePath();
+            ctx.fill();
+          }
+        } else if (type === 'metal') {
+          ctx.fillStyle = '#15181e';
+          ctx.fillRect(0, 0, 512, 512);
+          for (let y = 0; y < 512; y += 2) {
+            const shade = 18 + Math.floor(Math.random() * 12);
+            ctx.fillStyle = `rgb(${shade},${shade + 2},${shade + 5})`;
+            ctx.fillRect(0, y, 512, 1);
+          }
+          for (let b = 0; b < 14; b++) {
+            ctx.fillStyle = 'rgba(75, 10, 10, 0.28)';
+            ctx.beginPath();
+            ctx.arc(Math.random() * 512, Math.random() * 512, 6 + Math.random() * 22, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.strokeStyle = '#0d0f12';
+          ctx.lineWidth = 6;
+          ctx.strokeRect(12, 12, 488, 488);
+          ctx.beginPath();
+          ctx.moveTo(0, 256);
+          ctx.lineTo(512, 256);
+          ctx.stroke();
+        }
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        return tex;
+      }
+
+      // =========================================================================
+      // 3. THREE.JS SCENE, RENDERER, CAMERA & ROOM
+      // =========================================================================
+      const canvas = document.getElementById('game-canvas');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x020204);
+      scene.fog = new THREE.FogExp2(0x020204, 0.095);
+
+      const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 60);
+      camera.position.set(0, 1.65, 0.45);
+      camera.rotation.order = 'YXZ';
+      scene.add(camera);
+
+      const floorTex = createProceduralTexture('floor');
+      floorTex.repeat.set(4, 4);
+      const wallTex = createProceduralTexture('wall');
+      wallTex.repeat.set(2, 1);
+      const metalTex = createProceduralTexture('metal');
+
+      const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.65, metalness: 0.25 });
+      const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.78, metalness: 0.18 });
+      const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x0b0d11, roughness: 0.9, metalness: 0.2 });
+      const darkSteelMat = new THREE.MeshStandardMaterial({ map: metalTex, roughness: 0.42, metalness: 0.78 });
+
+      const ROOM_W = 6.4;
+      const ROOM_D = 6.4;
+      const ROOM_H = 3.6;
+
+      const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), floorMat);
+      floorMesh.rotation.x = -Math.PI / 2;
+      floorMesh.receiveShadow = true;
+      scene.add(floorMesh);
+
+      // Chapter 2: Submerged Reactor Water Layer & Floor Grate
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x064e3b,
+        emissive: 0x022c22,
+        emissiveIntensity: 0.6,
+        transparent: true,
+        opacity: 0.68,
+        roughness: 0.15,
+        metalness: 0.6
+      });
+      const reactorWaterMesh = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), waterMat);
+      reactorWaterMesh.rotation.x = -Math.PI / 2;
+      reactorWaterMesh.position.y = 0.04;
+      reactorWaterMesh.visible = false;
+      scene.add(reactorWaterMesh);
+
+      const floorGrateGroup = new THREE.Group();
+      floorGrateGroup.position.set(0, 0.02, -0.85);
+      for (let gx = -0.6; gx <= 0.6; gx += 0.2) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, 1.3), darkSteelMat);
+        bar.position.x = gx;
+        floorGrateGroup.add(bar);
+      }
+      const grateHitBox = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.25, 1.4), new THREE.MeshBasicMaterial({ visible: false }));
+      grateHitBox.userData = { interactType: 'floorGrate' };
+      floorGrateGroup.add(grateHitBox);
+      floorGrateGroup.visible = false;
+      scene.add(floorGrateGroup);
+
+      const ceilingMesh = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), ceilingMat);
+      ceilingMesh.rotation.x = Math.PI / 2;
+      ceilingMesh.position.y = ROOM_H;
+      scene.add(ceilingMesh);
+
+      for (let z = -2.4; z <= 2.4; z += 1.6) {
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(ROOM_W, 0.18, 0.22), darkSteelMat);
+        beam.position.set(0, ROOM_H - 0.09, z);
+        scene.add(beam);
+      }
+
+      const backWall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_H), wallMat);
+      backWall.position.set(0, ROOM_H / 2, ROOM_D / 2);
+      backWall.rotation.y = Math.PI;
+      scene.add(backWall);
+
+      const deskGroup = new THREE.Group();
+      const deskTop = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.1, 0.85), darkSteelMat);
+      deskTop.position.set(0, 0.82, -1.65);
+      deskTop.castShadow = true;
+      deskTop.receiveShadow = true;
+      deskGroup.add(deskTop);
+
+      const screenMats = [];
+      for (let i = -1; i <= 1; i++) {
+        const mon = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.42, 0.35), darkSteelMat);
+        mon.position.set(i * 0.72, 1.08, -1.78);
+        mon.rotation.y = -i * 0.22;
+        deskGroup.add(mon);
+
+        const screenMat = new THREE.MeshBasicMaterial({ color: i === 0 ? 0x163828 : 0x102235 });
+        screenMats.push(screenMat);
+        const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.33), screenMat);
+        screen.position.set(i * 0.72, 1.08, -1.60);
+        screen.rotation.y = -i * 0.22;
+        deskGroup.add(screen);
+      }
+      scene.add(deskGroup);
+
+      // =========================================================================
+      // 4. THREE BLAST DOORS (LEFT, FRONT, RIGHT)
+      // =========================================================================
+      const interactiveMeshes = [];
+      const doors = {};
+
+      function buildWallWithDoor(key, position, rotationY) {
+        const group = new THREE.Group();
+        group.position.copy(position);
+        group.rotation.y = rotationY;
+        scene.add(group);
+
+        const doorW = 1.65;
+        const doorH = 2.55;
+        const sideW = (ROOM_W - doorW) / 2;
+
+        const leftPier = new THREE.Mesh(new THREE.BoxGeometry(sideW, ROOM_H, 0.32), wallMat);
+        leftPier.position.set(-(doorW / 2 + sideW / 2), ROOM_H / 2, 0);
+        leftPier.receiveShadow = true;
+        group.add(leftPier);
+
+        const rightPier = new THREE.Mesh(new THREE.BoxGeometry(sideW, ROOM_H, 0.32), wallMat);
+        rightPier.position.set(doorW / 2 + sideW / 2, ROOM_H / 2, 0);
+        rightPier.receiveShadow = true;
+        group.add(rightPier);
+
+        const header = new THREE.Mesh(new THREE.BoxGeometry(doorW, ROOM_H - doorH, 0.32), wallMat);
+        header.position.set(0, doorH + (ROOM_H - doorH) / 2, 0);
+        group.add(header);
+
+        const frameTop = new THREE.Mesh(new THREE.BoxGeometry(doorW + 0.16, 0.12, 0.38), darkSteelMat);
+        frameTop.position.set(0, doorH + 0.02, 0);
+        const frameLeft = new THREE.Mesh(new THREE.BoxGeometry(0.12, doorH + 0.08, 0.38), darkSteelMat);
+        frameLeft.position.set(-(doorW / 2 + 0.02), doorH / 2, 0);
+        const frameRight = new THREE.Mesh(new THREE.BoxGeometry(0.12, doorH + 0.08, 0.38), darkSteelMat);
+        frameRight.position.set(doorW / 2 + 0.02, doorH / 2, 0);
+        group.add(frameTop, frameLeft, frameRight);
+
+        const glassMat = new THREE.MeshPhysicalMaterial({
+          color: 0x93c5fd,
+          transparent: true,
+          opacity: 0.22,
+          roughness: 0.12,
+          metalness: 0.1
+        });
+        const windowPane = new THREE.Mesh(new THREE.PlaneGeometry(doorW - 0.14, doorH - 0.14), glassMat);
+        windowPane.position.set(0, doorH / 2, 0.02);
+        group.add(windowPane);
+
+        for (let bx = -0.5; bx <= 0.5; bx += 0.5) {
+          const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, doorH - 0.1, 8), darkSteelMat);
+          bar.position.set(bx, doorH / 2, 0.04);
+          group.add(bar);
+        }
+
+        const shutter = new THREE.Mesh(new THREE.BoxGeometry(doorW - 0.06, doorH - 0.04, 0.14), darkSteelMat);
+        const openY = doorH + doorH / 2 - 0.05;
+        const closedY = doorH / 2;
+        shutter.position.set(0, openY, 0.11);
+        group.add(shutter);
+
+        const panelBox = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.46, 0.12), darkSteelMat);
+        panelBox.position.set(doorW / 2 + 0.34, 1.35, 0.18);
+        group.add(panelBox);
+
+        const btnMat = new THREE.MeshStandardMaterial({
+          color: 0x10b981,
+          emissive: 0x059669,
+          emissiveIntensity: 0.9,
+          roughness: 0.3
+        });
+        const buttonMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.06, 20), btnMat);
+        buttonMesh.rotation.x = Math.PI / 2;
+        buttonMesh.position.set(doorW / 2 + 0.34, 1.38, 0.25);
+        buttonMesh.userData = { interactType: 'doorButton', doorKey: key };
+        group.add(buttonMesh);
+        interactiveMeshes.push(buttonMesh);
+
+        const hallGroup = new THREE.Group();
+        hallGroup.position.set(0, 0, -0.2);
+        group.add(hallGroup);
+
+        const hallFloor = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 9.5), floorMat);
+        hallFloor.rotation.x = -Math.PI / 2;
+        hallFloor.position.set(0, 0.01, -4.75);
+        hallGroup.add(hallFloor);
+
+        const hallLeft = new THREE.Mesh(new THREE.PlaneGeometry(9.5, ROOM_H), wallMat);
+        hallLeft.rotation.y = Math.PI / 2;
+        hallLeft.position.set(-1.2, ROOM_H / 2, -4.75);
+        hallGroup.add(hallLeft);
+
+        const hallRight = new THREE.Mesh(new THREE.PlaneGeometry(9.5, ROOM_H), wallMat);
+        hallRight.rotation.y = -Math.PI / 2;
+        hallRight.position.set(1.2, ROOM_H / 2, -4.75);
+        hallGroup.add(hallRight);
+
+        const hallLight = new THREE.PointLight(0x991b1b, 0.85, 7.0);
+        hallLight.position.set(0, 2.5, -2.4);
+        group.add(hallLight);
+
+        doors[key] = {
+          key,
+          group,
+          hallGroup,
+          shutter,
+          buttonMesh,
+          btnMat,
+          hallLight,
+          openY,
+          closedY,
+          closed: false,
+          closeTimer: 0,
+          cooldownTimer: 0,
+          lockedOut: false
+        };
+      }
+
+      buildWallWithDoor('front', new THREE.Vector3(0, 0, -ROOM_D / 2), 0);
+      buildWallWithDoor('left', new THREE.Vector3(-ROOM_W / 2, 0, 0), Math.PI / 2);
+      buildWallWithDoor('right', new THREE.Vector3(ROOM_W / 2, 0, 0), -Math.PI / 2);
+
+      // =========================================================================
+      // 5. LIGHTING, FLASHLIGHT & VIEWMODEL TOOLS
+      // =========================================================================
+      const ambientLight = new THREE.AmbientLight(0x0d1017, 0.24);
+      scene.add(ambientLight);
+
+      const ceilingLight = new THREE.PointLight(0xcbd5e1, 1.05, 10.5);
+      ceilingLight.position.set(0, ROOM_H - 0.25, 0);
+      ceilingLight.castShadow = true;
+      scene.add(ceilingLight);
+
+      const emergencyLight = new THREE.PointLight(0xdc2626, 0, 9.0);
+      emergencyLight.position.set(0, ROOM_H - 0.3, 0);
+      scene.add(emergencyLight);
+
+      const flashlight = new THREE.SpotLight(0xfffbeb, 5.2, 18, Math.PI / 6.2, 0.45, 1.15);
+      flashlight.position.set(0.22, -0.18, -0.1);
+      const flashTarget = new THREE.Object3D();
+      flashTarget.position.set(0, 0, -5);
+      camera.add(flashlight);
+      camera.add(flashTarget);
+      flashlight.target = flashTarget;
+
+      const handRig = new THREE.Group();
+      handRig.position.set(0.32, -0.32, -0.52);
+      camera.add(handRig);
+
+      // Tool 0: Flashlight
+      const vmFlashlight = new THREE.Group();
+      const flBody = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.028, 0.24, 14), darkSteelMat);
+      flBody.rotation.x = Math.PI / 2;
+      const flHead = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.032, 0.06, 14), darkSteelMat);
+      flHead.rotation.x = Math.PI / 2;
+      flHead.position.z = -0.13;
+      const flLens = new THREE.Mesh(new THREE.CircleGeometry(0.04, 14), new THREE.MeshBasicMaterial({ color: 0xfef08a }));
+      flLens.position.z = -0.161;
+      flLens.rotation.y = Math.PI;
+      vmFlashlight.add(flBody, flHead, flLens);
+      handRig.add(vmFlashlight);
+
+      // Tool 1: Knife
+      const vmKnife = new THREE.Group();
+      const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.13, 10), new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.8 }));
+      handle.rotation.x = Math.PI / 2.4;
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.015, 0.02), darkSteelMat);
+      guard.position.set(0, 0.03, -0.05);
+      const blade = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.19, 4), new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.92, roughness: 0.15 }));
+      blade.rotation.x = -Math.PI / 2.2;
+      blade.position.set(0, 0.08, -0.13);
+      vmKnife.add(handle, guard, blade);
+      vmKnife.visible = false;
+      handRig.add(vmKnife);
+
+      // Tool 2: Fire Extinguisher / Arc Welder
+      const vmExtinguisher = new THREE.Group();
+      const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.28, 16), new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.35, metalness: 0.4 }));
+      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, 0.16, 10), new THREE.MeshStandardMaterial({ color: 0x111827 }));
+      nozzle.rotation.x = Math.PI / 3;
+      nozzle.position.set(0, 0.16, -0.08);
+      vmExtinguisher.add(tank, nozzle);
+      vmExtinguisher.visible = false;
+      handRig.add(vmExtinguisher);
+
+      // Tool 3: Horror Mask
+      const vmMask = new THREE.Group();
+      const maskFace = new THREE.Mesh(
+        new THREE.SphereGeometry(0.11, 16, 16, 0, Math.PI),
+        new THREE.MeshStandardMaterial({ color: 0xe5e7eb, roughness: 0.4, metalness: 0.1 })
+      );
+      maskFace.rotation.y = Math.PI;
+      const maskEyeL = new THREE.Mesh(new THREE.CircleGeometry(0.024, 10), new THREE.MeshBasicMaterial({ color: 0x050505 }));
+      maskEyeL.position.set(-0.04, 0.025, -0.105);
+      maskEyeL.rotation.y = Math.PI;
+      const maskEyeR = maskEyeL.clone();
+      maskEyeR.position.x = 0.04;
+      vmMask.add(maskFace, maskEyeL, maskEyeR);
+      vmMask.visible = false;
+      handRig.add(vmMask);
+
+      // =========================================================================
+      // 6. 3D HORROR ENTITIES BUILDERS (CHAPTER 1 & CHAPTER 2)
+      // =========================================================================
+      function createMonsterMesh(type) {
+        const g = new THREE.Group();
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff1e1e });
+        const whiteEyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+        if (type === 'bear') {
+          const fur = new THREE.MeshStandardMaterial({ color: 0x3b2314, roughness: 0.85 });
+          const snoutMat = new THREE.MeshStandardMaterial({ color: 0x6b442a, roughness: 0.7 });
+          const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.44, 1.35, 14), fur);
+          torso.position.y = 0.95;
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 16), fur);
+          head.position.y = 1.82;
+          const snout = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), snoutMat);
+          snout.position.set(0, 1.76, 0.28);
+          const earL = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.06, 12), fur);
+          earL.rotation.x = Math.PI / 2;
+          earL.position.set(-0.26, 2.08, 0);
+          const earR = earL.clone();
+          earR.position.x = 0.26;
+          const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), eyeMat);
+          eyeL.position.set(-0.11, 1.88, 0.30);
+          const eyeR = eyeL.clone();
+          eyeR.position.x = 0.11;
+          g.add(torso, head, snout, earL, earR, eyeL, eyeR);
+        } else if (type === 'fox') {
+          const fur = new THREE.MeshStandardMaterial({ color: 0x9a3412, roughness: 0.7 });
+          const torso = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.4, 12), fur);
+          torso.position.y = 0.9;
+          const head = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.55, 12), fur);
+          head.rotation.x = Math.PI / 2;
+          head.position.set(0, 1.65, 0.15);
+          const earL = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.26, 8), fur);
+          earL.position.set(-0.14, 1.92, 0.02);
+          const earR = earL.clone();
+          earR.position.x = 0.14;
+          const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.038, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfacc15 }));
+          eyeL.position.set(-0.09, 1.72, 0.24);
+          const eyeR = eyeL.clone();
+          eyeR.position.x = 0.09;
+          g.add(torso, head, earL, earR, eyeL, eyeR);
+        } else if (type === 'robotica') {
+          const chrome = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.9, roughness: 0.2 });
+          const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 1.25, 0.36), chrome);
+          torso.position.y = 1.05;
+          const head = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.42, 0.36), chrome);
+          head.position.y = 1.92;
+          const visor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.05), new THREE.MeshBasicMaterial({ color: 0x38bdf8 }));
+          visor.position.set(0, 1.95, 0.18);
+          g.add(torso, head, visor);
+        } else if (type === 'bunny') {
+          const fur = new THREE.MeshStandardMaterial({ color: 0x312e81, roughness: 0.8 });
+          const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, 1.3, 14), fur);
+          torso.position.y = 0.9;
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.30, 14, 14), fur);
+          head.position.y = 1.72;
+          const earL = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.56, 0.06), fur);
+          earL.position.set(-0.12, 2.22, 0);
+          earL.rotation.z = 0.12;
+          const earR = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.56, 0.06), fur);
+          earR.position.set(0.12, 2.22, 0);
+          earR.rotation.z = -0.15;
+          const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.042, 8, 8), whiteEyeMat);
+          eyeL.position.set(-0.1, 1.76, 0.26);
+          const eyeR = eyeL.clone();
+          eyeR.position.x = 0.1;
+          g.add(torso, head, earL, earR, eyeL, eyeR);
+        } else if (type === 'spidery') {
+          const chitin = new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.4, metalness: 0.5 });
+          const abdomen = new THREE.Mesh(new THREE.SphereGeometry(0.36, 14, 14), chitin);
+          abdomen.scale.set(1, 0.7, 1.3);
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), chitin);
+          head.position.set(0, -0.05, 0.35);
+          g.add(abdomen, head);
+
+          for (let e = -1.5; e <= 1.5; e += 1) {
+            const eye = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 6), eyeMat);
+            eye.position.set(e * 0.06, -0.08, 0.54);
+            g.add(eye);
+          }
+
+          for (let side of [-1, 1]) {
+            for (let i = 0; i < 4; i++) {
+              const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.012, 0.95, 6), chitin);
+              leg.position.set(side * 0.48, -0.12, -0.25 + i * 0.18);
+              leg.rotation.z = side * 1.05;
+              leg.rotation.y = (i - 1.5) * 0.28;
+              g.add(leg);
+            }
+          }
+        } else if (type === 'boss') {
+          const armor = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.35, metalness: 0.85 });
+          const coreMat = new THREE.MeshBasicMaterial({ color: 0xdc2626 });
+          const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.36, 1.55, 16), armor);
+          torso.position.y = 1.05;
+          const chestCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), coreMat);
+          chestCore.position.set(0, 1.25, 0.42);
+          const head = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.48, 0.44), armor);
+          head.position.y = 2.08;
+          const crownL = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.42, 8), armor);
+          crownL.position.set(-0.18, 2.45, 0);
+          crownL.rotation.z = 0.25;
+          const crownR = crownL.clone();
+          crownR.position.x = 0.18;
+          crownR.rotation.z = -0.25;
+          const visor = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.09, 0.06), coreMat);
+          visor.position.set(0, 2.1, 0.22);
+          g.add(torso, chestCore, head, crownL, crownR, visor);
+        } else if (type === 'architect') {
+          // Chapter 2 Boss: The Architect
+          const frame = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.25, metalness: 0.92 });
+          const arcCore = new THREE.MeshBasicMaterial({ color: 0x06b6d4 });
+          const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.38, 1.75, 8), frame);
+          torso.position.y = 1.1;
+          const turbineRing = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.05, 8, 20), arcCore);
+          turbineRing.position.set(0, 1.35, 0.42);
+          const head = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), frame);
+          head.position.y = 2.25;
+          const eyeBar = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.08, 0.12), arcCore);
+          eyeBar.position.set(0, 2.25, 0.26);
+          g.add(torso, turbineRing, head, eyeBar);
+        } else if (type === 'wraith') {
+          const robeMat = new THREE.MeshStandardMaterial({
+            color: 0x1e293b,
+            transparent: true,
+            opacity: 0.72,
+            roughness: 0.9
+          });
+          const shroud = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1.85, 14, 1, true), robeMat);
+          shroud.position.y = 1.05;
+          const skull = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 12), new THREE.MeshBasicMaterial({ color: 0xcbd5e1 }));
+          skull.scale.set(0.85, 1.25, 0.9);
+          skull.position.y = 1.88;
+          const hollowL = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), new THREE.MeshBasicMaterial({ color: 0x020617 }));
+          hollowL.position.set(-0.08, 1.92, 0.2);
+          const hollowR = hollowL.clone();
+          hollowR.position.x = 0.08;
+          const mouth = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.14, 8), new THREE.MeshBasicMaterial({ color: 0x020617 }));
+          mouth.position.set(0, 1.78, 0.2);
+          g.add(shroud, skull, hollowL, hollowR, mouth);
+        } else if (type === 'mimic' || type === 'doppelganger') {
+          const skinMat = new THREE.MeshStandardMaterial({ color: type === 'doppelganger' ? 0x1e3a8a : 0x3f3f46, roughness: 0.65 });
+          const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.05, 0.35), skinMat);
+          body.position.y = 0.85;
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 14), skinMat);
+          head.position.y = 1.55;
+          const eyeMatYellow = new THREE.MeshBasicMaterial({ color: type === 'doppelganger' ? 0x38bdf8 : 0xfef08a });
+          const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 10), eyeMatYellow);
+          eyeL.position.set(-0.11, 1.60, 0.28);
+          const eyeR = eyeL.clone();
+          eyeR.position.x = 0.11;
+          const grin = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.07, 0.06), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+          grin.position.set(0, 1.44, 0.29);
+          g.add(body, head, eyeL, eyeR, grin);
+        } else if (type === 'crawler') {
+          const shellMat = new THREE.MeshStandardMaterial({ color: 0x18181b, metalness: 0.75, roughness: 0.3 });
+          const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.22, 0.72), shellMat);
+          chassis.position.y = 0.18;
+          const sensor = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), new THREE.MeshBasicMaterial({ color: 0x22c55e }));
+          sensor.position.set(0, 0.22, 0.36);
+          g.add(chassis, sensor);
+          for (let s of [-1, 1]) {
+            for (let k = -1; k <= 1; k++) {
+              const claw = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.04, 0.06), shellMat);
+              claw.position.set(s * 0.34, 0.12, k * 0.24);
+              claw.rotation.z = s * -0.45;
+              g.add(claw);
+            }
+          }
+        } else if (type === 'angler') {
+          // Chapter 2 Grate Creature: The Angler
+          const scaleMat = new THREE.MeshStandardMaterial({ color: 0x064e3b, roughness: 0.3, metalness: 0.5 });
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 12), scaleMat);
+          body.scale.set(1.1, 0.45, 1.4);
+          const lureStalk = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.45, 6), scaleMat);
+          lureStalk.position.set(0, 0.22, 0.25);
+          lureStalk.rotation.x = 0.45;
+          const lureBulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 10), new THREE.MeshBasicMaterial({ color: 0x22d3ee }));
+          lureBulb.position.set(0, 0.42, 0.42);
+          g.add(body, lureStalk, lureBulb);
+        } else if (type === 'leech') {
+          // Chapter 2 Catwalk Swarm: Leech Swarm
+          const leechMat = new THREE.MeshStandardMaterial({ color: 0x1e1b4b, roughness: 0.35 });
+          for (let j = 0; j < 5; j++) {
+            const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.04, 0.65, 8), leechMat);
+            seg.position.set((j - 2) * 0.22, -0.15, (j % 2) * 0.18);
+            seg.rotation.z = (j - 2) * 0.18;
+            const mouth = new THREE.Mesh(new THREE.RingGeometry(0.02, 0.06, 8), new THREE.MeshBasicMaterial({ color: 0xa855f7, side: THREE.DoubleSide }));
+            mouth.position.set((j - 2) * 0.22, -0.48, (j % 2) * 0.18);
+            mouth.rotation.x = Math.PI / 2;
+            g.add(seg, mouth);
+          }
+        } else if (type === 'juggernaut') {
+          // Chapter 2 Heavy Door Breaker
+          const heavyArmor = new THREE.MeshStandardMaterial({ color: 0x27272a, metalness: 0.85, roughness: 0.35 });
+          const torso = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.65, 0.65), heavyArmor);
+          torso.position.y = 1.05;
+          const head = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.38, 12), heavyArmor);
+          head.position.y = 2.05;
+          const slit = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.06, 0.08), new THREE.MeshBasicMaterial({ color: 0xf97316 }));
+          slit.position.set(0, 2.06, 0.29);
+          g.add(torso, head, slit);
+        } else if (type === 'whisperer') {
+          const mistMat = new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.25 });
+          const ghost = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.75, 10, 1, true), mistMat);
+          ghost.position.y = 1.0;
+          g.add(ghost);
+        } else if (type === 'pyro') {
+          const suitMat = new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.55 });
+          const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.42, 1.3, 14), suitMat);
+          torso.position.y = 0.95;
+          const tankCore = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.65, 12), new THREE.MeshBasicMaterial({ color: 0xf97316 }));
+          tankCore.position.set(0, 1.05, 0.32);
+          const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.30, 14, 14), darkSteelMat);
+          helmet.position.y = 1.78;
+          const visor = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.11, 0.08), new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));
+          visor.position.set(0, 1.80, 0.26);
+          g.add(torso, tankCore, helmet, visor);
+        } else if (type === 'siren') {
+          const frameMat = new THREE.MeshStandardMaterial({ color: 0x27272a, metalness: 0.6, roughness: 0.4 });
+          const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, 1.65, 12), frameMat);
+          pole.position.y = 0.9;
+          const horn1 = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.45, 12, 1, true), new THREE.MeshBasicMaterial({ color: 0xa855f7, side: THREE.DoubleSide }));
+          horn1.rotation.x = Math.PI / 2;
+          horn1.position.set(-0.18, 1.88, 0.15);
+          const horn2 = horn1.clone();
+          horn2.position.x = 0.18;
+          g.add(pole, horn1, horn2);
+        }
+
+        return g;
+      }
+
+      // =========================================================================
+      // 7. GAME STATE & MULTIPLAYER PARTY ENGINE
+      // =========================================================================
+      const state = {
+        chapter: 1,
+        mode: 'single',
+        running: false,
+        lives: 3,
+        maxLives: 3,
+        elapsed: 0,
+        repelled: 0,
+        selectedSlot: 0,
+        flashlightOn: true,
+        uvCooldown: 0,
+        hydraulicPressure: 100,
+        maskOn: false,
+        blackout: false,
+        blackoutTimer: 0,
+        toxicGasTimer: 0,
+        lookYaw: 0,
+        lookPitch: 0,
+        lookTargetYaw: 0,
+        lookTargetPitch: 0,
+        isDragging: false,
+        dragStartX: 0,
+        dragStartY: 0,
+        pointerDownPos: { x: 0, y: 0 },
+        entities: [],
+        projectiles: [],
+        voidTrails: [],
+        fireHazard: null,
+        extinguishing: false,
+        spawnCooldown: 8.4,
+        fireCooldown: 24.0,
+        blackoutCooldown: 32.0,
+        phantomTimer: 7.0,
+        cameraShake: 0,
+        jumpscare: null,
+        bossTriggered3: false,
+        bossTriggered10: false,
+        boss: null,
+        party: {
+          code: '',
+          isHost: false,
+          playerId: 'P-' + Math.random().toString(36).substring(2, 7).toUpperCase(),
+          playerName: 'GUARD-01',
+          members: [],
+          channel: null,
+          unsubCloud: null,
+          syncInterval: null,
+          peer: null,
+          hostConn: null,
+          guestConns: []
+        }
+      };
+
+      const elToast = document.getElementById('toast-banner');
+      const elDamageOverlay = document.getElementById('damage-overlay');
+      const elStaticOverlay = document.getElementById('static-overlay');
+      const elToxicOverlay = document.getElementById('toxic-overlay');
+      const elHudLayer = document.getElementById('hud-layer');
+      const elMenuOverlay = document.getElementById('menu-overlay');
+      const elGameOverOverlay = document.getElementById('gameover-overlay');
+      const elContextPrompt = document.getElementById('context-prompt');
+      const elMaskOverlay = document.getElementById('mask-overlay');
+      const elBossStruggleUI = document.getElementById('boss-struggle-ui');
+      const elBossStruggleCount = document.getElementById('boss-struggle-count');
+
+      let toastTimeout = null;
+      function showToast(msg, borderClass = 'border-red-500/70 text-red-200') {
+        elToast.textContent = msg;
+        elToast.className = `fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-lg bg-zinc-900/95 border ${borderClass} mono text-sm tracking-wider shadow-2xl transition-all duration-200 opacity-100`;
+        clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => {
+          elToast.style.opacity = '0';
+        }, 2800);
+      }
+
+      function selectChapter(ch) {
+        state.chapter = ch;
+        const btn1 = document.getElementById('btn-select-ch1');
+        const btn2 = document.getElementById('btn-select-ch2');
+        const tag = document.getElementById('menu-sector-tag');
+        const desc = document.getElementById('menu-sector-desc');
+        const header = document.getElementById('menu-header-banner');
+        const mpBadge = document.getElementById('mp-chapter-badge');
+        const g1 = document.getElementById('guide-ch1-content');
+        const g2 = document.getElementById('guide-ch2-content');
+
+        if (ch === 1) {
+          btn1.className = 'py-2 px-3 rounded-lg bg-red-950/80 border border-red-500/70 text-xs mono font-bold text-red-200 transition';
+          btn2.className = 'py-2 px-3 rounded-lg bg-transparent border border-transparent hover:bg-zinc-800/70 text-xs mono font-bold text-cyan-300 transition';
+          tag.textContent = 'SECTOR 09 // CONTAINMENT BREACH';
+          tag.className = 'px-2.5 py-1 rounded bg-red-950/80 border border-red-700/50 text-red-400 text-xs mono tracking-widest';
+          desc.textContent = 'Monitor the Left, Front, and Right blast door windows. Seal doors against intruders, eliminate ceiling & floor threats, and survive the Overlord Boss waves.';
+          header.className = 'p-6 sm:p-8 border-b border-zinc-800/90 bg-gradient-to-b from-red-950/25 to-transparent';
+          mpBadge.textContent = 'MISSION: CHAPTER 1 — SECTOR 09';
+          mpBadge.className = 'text-[11px] mono text-red-400';
+          g1.classList.remove('hidden');
+          g2.classList.add('hidden');
+        } else {
+          btn2.className = 'py-2 px-3 rounded-lg bg-cyan-950/80 border border-cyan-400/70 text-xs mono font-bold text-cyan-100 transition';
+          btn1.className = 'py-2 px-3 rounded-lg bg-transparent border border-transparent hover:bg-zinc-800/70 text-xs mono font-bold text-red-300 transition';
+          tag.textContent = 'SUB-LEVEL 14 // THE DEEP REACTOR';
+          tag.className = 'px-2.5 py-1 rounded bg-cyan-950/80 border border-cyan-500/50 text-cyan-300 text-xs mono tracking-widest';
+          desc.textContent = 'Flooded geothermal core. Manage Hydraulic Door Pressure, weld burst coolant pipes, shock floor-grate Anglers, and survive The Architect Boss.';
+          header.className = 'p-6 sm:p-8 border-b border-zinc-800/90 bg-gradient-to-b from-cyan-950/30 to-transparent';
+          mpBadge.textContent = 'MISSION: CHAPTER 2 — SUB-LEVEL 14';
+          mpBadge.className = 'text-[11px] mono text-cyan-300';
+          g1.classList.add('hidden');
+          g2.classList.remove('hidden');
+        }
+      }
+
+      function applyChapterVisuals() {
+        const isCh2 = state.chapter === 2;
+        reactorWaterMesh.visible = isCh2;
+        floorGrateGroup.visible = isCh2;
+        const pressureBadge = document.getElementById('hud-pressure-badge');
+        const chPill = document.getElementById('hud-chapter-pill');
+
+        if (isCh2) {
+          chPill.textContent = 'CH.2 // SUB-14';
+          chPill.className = 'px-2 py-0.5 rounded bg-cyan-950 border border-cyan-500/50 text-[10px] mono text-cyan-300';
+          pressureBadge.classList.remove('hidden');
+          scene.background = new THREE.Color(0x02070a);
+          scene.fog = new THREE.FogExp2(0x02070a, 0.105);
+          ceilingLight.color.setHex(0x99f6e4);
+          Object.values(doors).forEach(d => d.hallLight.color.setHex(0x0e7490));
+          screenMats.forEach((m, i) => m.color.setHex(i === 0 ? 0x083344 : 0x064e3b));
+
+          document.getElementById('inv-slot0-title').textContent = 'UV FLASHLIGHT';
+          document.getElementById('inv-slot1-title').textContent = 'HARPOON KNIFE';
+          document.getElementById('inv-slot1-sub').textContent = 'THROW AT LEECH SWARM';
+          document.getElementById('inv-slot2-title').textContent = 'ARC WELDER';
+          document.getElementById('inv-slot2-sub').textContent = 'WELD PIPES / SHOCK GRATE';
+          document.getElementById('inv-slot3-title').textContent = 'REBREATHER MASK';
+          document.getElementById('mask-overlay-label').textContent = '😷 REBREATHER SEALED — OXYGEN & DISGUISE ACTIVE';
+        } else {
+          chPill.textContent = 'CH.1 // SEC-09';
+          chPill.className = 'px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-[10px] mono text-zinc-300';
+          pressureBadge.classList.add('hidden');
+          scene.background = new THREE.Color(0x020204);
+          scene.fog = new THREE.FogExp2(0x020204, 0.095);
+          ceilingLight.color.setHex(0xcbd5e1);
+          Object.values(doors).forEach(d => d.hallLight.color.setHex(0x991b1b));
+          screenMats.forEach((m, i) => m.color.setHex(i === 0 ? 0x163828 : 0x102235));
+
+          document.getElementById('inv-slot0-title').textContent = 'FLASHLIGHT';
+          document.getElementById('inv-slot1-title').textContent = 'TACTICAL KNIFE';
+          document.getElementById('inv-slot1-sub').textContent = 'THROW AT SPIDERY/CRAWLER';
+          document.getElementById('inv-slot2-title').textContent = 'EXTINGUISHER';
+          document.getElementById('inv-slot2-sub').textContent = 'HOLD CLICK ON FIRE';
+          document.getElementById('inv-slot3-title').textContent = 'HORROR MASK';
+          document.getElementById('mask-overlay-label').textContent = '🎭 MASK EQUIPPED — BREATHING MUFFLED';
+        }
+      }
+
+      function generatePartyCode() {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        let code = '';
+        for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
+        return code;
+      }
+
+      function renderPartyLobby() {
+        const rosterEl = document.getElementById('lobby-roster');
+        const countEl = document.getElementById('lobby-player-count');
+        const codeEl = document.getElementById('lobby-code-display');
+        const btnAddBot = document.getElementById('btn-add-bot');
+        const btnStartMp = document.getElementById('btn-start-mp-game');
+        const guestWaiting = document.getElementById('guest-waiting-label');
+
+        codeEl.textContent = state.party.code;
+        countEl.textContent = `${state.party.members.length} / 4 PLAYERS`;
+
+        if (state.party.isHost) {
+          btnAddBot.classList.remove('hidden');
+          btnStartMp.classList.remove('hidden');
+          guestWaiting.classList.add('hidden');
+        } else {
+          btnAddBot.classList.add('hidden');
+          btnStartMp.classList.add('hidden');
+          guestWaiting.classList.remove('hidden');
+        }
+
+        rosterEl.innerHTML = '';
+        for (let i = 0; i < 4; i++) {
+          const member = state.party.members[i];
+          const card = document.createElement('div');
+          if (member) {
+            card.className = 'flex items-center justify-between p-2.5 rounded-lg bg-zinc-950 border border-indigo-500/40 text-xs mono';
+            card.innerHTML = `
+              <span class="text-white font-bold">${member.name}</span>
+              <span class="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300">${i === 0 ? 'HOST' : member.isBot ? 'AI GUARD' : 'READY'}</span>
+            `;
+          } else {
+            card.className = 'flex items-center justify-between p-2.5 rounded-lg bg-zinc-950/40 border border-zinc-800/80 text-xs mono text-zinc-600';
+            card.innerHTML = `<span>EMPTY SLOT 0${i + 1}</span><span>OPEN</span>`;
+          }
+          rosterEl.appendChild(card);
+        }
+        updateHudPartyList();
+      }
+
+      function updateHudPartyList() {
+        const box = document.getElementById('hud-party-box');
+        if (state.mode !== 'multi') {
+          box.classList.add('hidden');
+          return;
+        }
+        box.classList.remove('hidden');
+        document.getElementById('hud-party-code').textContent = state.party.code;
+        document.getElementById('hud-party-count').textContent = `${state.party.members.length}/4`;
+        const list = document.getElementById('hud-party-members');
+        list.innerHTML = state.party.members.map((m, i) =>
+          `<div class="text-zinc-300">• ${m.name} ${i === 0 ? '<span class="text-indigo-300">[HOST]</span>' : '<span class="text-emerald-400">[ACTIVE]</span>'}</div>`
+        ).join('');
+      }
+
+      function saveLocalParty(code, payload) {
+        if (!code) return;
+        try {
+          const existing = JSON.parse(localStorage.getItem('nw_party_' + code) || '{}');
+          const next = { ...existing, ...payload, updatedAt: Date.now() };
+          localStorage.setItem('nw_party_' + code, JSON.stringify(next));
+        } catch (e) {}
+      }
+
+      function readLocalParty(code) {
+        if (!code) return null;
+        try {
+          const raw = localStorage.getItem('nw_party_' + code);
+          return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function cleanupNetworkHandles() {
+        if (state.party.channel) {
+          try { state.party.channel.close(); } catch (e) {}
+          state.party.channel = null;
+        }
+        if (state.party.unsubCloud) {
+          try { state.party.unsubCloud(); } catch (e) {}
+          state.party.unsubCloud = null;
+        }
+        if (state.party.syncInterval) {
+          clearInterval(state.party.syncInterval);
+          state.party.syncInterval = null;
+        }
+        if (state.party.hostConn) {
+          try { state.party.hostConn.close(); } catch (e) {}
+          state.party.hostConn = null;
+        }
+        if (state.party.guestConns && state.party.guestConns.length > 0) {
+          state.party.guestConns.forEach(c => { try { c.close(); } catch (e) {} });
+          state.party.guestConns = [];
+        }
+        if (state.party.peer) {
+          try { state.party.peer.destroy(); } catch (e) {}
+          state.party.peer = null;
+        }
+      }
+
+      function initPeerHost(code) {
+        if (typeof window.Peer === 'undefined') {
+          showToast('PEERJS LIBRARY NOT LOADED — CHECK NETWORK', 'border-red-500 text-red-200');
+          return;
+        }
+        try {
+          const peer = new window.Peer('nightwatch-s09-' + code, {
+            debug: 0,
+            config: {
+              iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+              ]
+            }
+          });
+          state.party.peer = peer;
+          peer.on('error', (err) => {
+            if (err && err.type === 'unavailable-id') {
+              showToast('PARTY CODE ALREADY ACTIVE ON NETWORK!', 'border-amber-400 text-amber-200');
+            }
+          });
+          peer.on('connection', (conn) => {
+            state.party.guestConns.push(conn);
+            if (conn.metadata && conn.metadata.member) {
+              handlePartyMessage({
+                sender: conn.metadata.member.id,
+                type: 'joinRequest',
+                member: conn.metadata.member
+              });
+              if (conn.metadata.guestPeerId && state.party.peer && !state.party.peer.destroyed) {
+                try {
+                  const retConn = state.party.peer.connect(conn.metadata.guestPeerId, { reliable: true });
+                  state.party.guestConns.push(retConn);
+                  retConn.on('open', () => {
+                    retConn.send({ sender: state.party.playerId, type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+                  });
+                } catch (e) {}
+              }
+            }
+            conn.on('data', (data) => {
+              handlePartyMessage(data);
+              state.party.guestConns.forEach(other => {
+                if (other !== conn && other.open) {
+                  try { other.send(data); } catch (e) {}
+                }
+              });
+            });
+            conn.on('open', () => {
+              try {
+                conn.send({ sender: state.party.playerId, type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+              } catch (e) {}
+            });
+            let burst = 0;
+            const burstTimer = setInterval(() => {
+              burst++;
+              if (conn.open) {
+                try {
+                  conn.send({ sender: state.party.playerId, type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+                } catch (e) {}
+              }
+              if (burst >= 8 || !conn.open) clearInterval(burstTimer);
+            }, 500);
+            conn.on('close', () => {
+              clearInterval(burstTimer);
+              state.party.guestConns = state.party.guestConns.filter(c => c !== conn);
+            });
+          });
+        } catch (e) {}
+      }
+
+      function connectPeerGuest(code, myMember) {
+        return new Promise((resolve) => {
+          if (typeof window.Peer === 'undefined') {
+            resolve(false);
+            return;
+          }
+          let settled = false;
+          let retryTimer = null;
+          const enterLobbyImmediately = () => {
+            if (settled) return;
+            settled = true;
+            if (retryTimer) clearInterval(retryTimer);
+            clearTimeout(timer);
+            if (state.party.members.length === 0) {
+              state.party.members = [{ id: 'HOST-SYNC', name: 'HOST', isBot: false }, myMember];
+            }
+            document.getElementById('mp-setup-panel').classList.add('hidden');
+            document.getElementById('mp-active-lobby').classList.remove('hidden');
+            renderPartyLobby();
+            resolve(true);
+          };
+          const finishFail = () => {
+            if (settled) return;
+            settled = true;
+            if (retryTimer) clearInterval(retryTimer);
+            resolve(false);
+          };
+          const timer = setTimeout(() => finishFail(), 8500);
+
+          try {
+            const guestPeerId = 'nightwatch-s09-g-' + state.party.playerId.toLowerCase();
+            const peer = new window.Peer(guestPeerId, {
+              debug: 0,
+              config: {
+                iceServers: [
+                  { urls: 'stun:stun.l.google.com:19302' },
+                  { urls: 'stun:stun1.l.google.com:19302' }
+                ]
+              }
+            });
+            state.party.peer = peer;
+
+            peer.on('connection', (inConn) => {
+              state.party.hostConn = inConn;
+              inConn.on('data', (data) => {
+                handlePartyMessage(data);
+                if (data && data.type === 'lobbyUpdate') {
+                  enterLobbyImmediately();
+                }
+              });
+            });
+
+            peer.on('error', (err) => {
+              if (err && err.type === 'peer-unavailable') {
+                clearTimeout(timer);
+                finishFail();
+              }
+            });
+            peer.on('open', () => {
+              const attachConnHandlers = (conn) => {
+                conn.on('data', (data) => {
+                  handlePartyMessage(data);
+                  if (data && data.type === 'lobbyUpdate') {
+                    enterLobbyImmediately();
+                  }
+                });
+                conn.on('open', () => {
+                  try {
+                    conn.send({ sender: state.party.playerId, type: 'joinRequest', member: myMember });
+                  } catch (e) {}
+                  enterLobbyImmediately();
+                });
+                conn.on('close', () => {
+                  if (!state.party.isHost && state.party.code === code && settled) {
+                    leaveParty(true);
+                    showToast('DISCONNECTED FROM HOST.', 'border-red-500 text-red-200');
+                  }
+                });
+              };
+
+              const attemptConnect = () => {
+                if (settled) return;
+                const conn = peer.connect('nightwatch-s09-' + code, {
+                  reliable: true,
+                  metadata: { member: myMember, guestPeerId }
+                });
+                state.party.hostConn = conn;
+                attachConnHandlers(conn);
+              };
+
+              attemptConnect();
+              retryTimer = setInterval(() => {
+                if (!settled && (!state.party.hostConn || !state.party.hostConn.open)) {
+                  attemptConnect();
+                } else if (state.party.hostConn && state.party.hostConn.open) {
+                  try {
+                    state.party.hostConn.send({ sender: state.party.playerId, type: 'joinRequest', member: myMember });
+                  } catch (e) {}
+                }
+              }, 1400);
+            });
+          } catch (e) {
+            clearTimeout(timer);
+            finishFail();
+          }
+        });
+      }
+
+      function probeLocalTabParty(code) {
+        return new Promise((resolve) => {
+          const ch = new BroadcastChannel('nightwatch_party_' + code);
+          let done = false;
+          const timer = setTimeout(() => {
+            if (!done) {
+              done = true;
+              ch.close();
+              resolve(null);
+            }
+          }, 450);
+          ch.onmessage = (ev) => {
+            const d = ev.data;
+            if (!done && d && (d.type === 'lobbyUpdate' || d.type === 'pongHost') && Array.isArray(d.members) && d.members.length > 0) {
+              done = true;
+              clearTimeout(timer);
+              ch.close();
+              resolve(d.members);
+            }
+          };
+          ch.postMessage({ sender: state.party.playerId, type: 'pingHost' });
+        });
+      }
+
+      async function setupPartySync(code) {
+        cleanupNetworkHandles();
+
+        if (window.CloudSyncReady) {
+          try { await window.CloudSyncReady; } catch (e) {}
+        }
+
+        if (state.party.isHost) {
+          initPeerHost(code);
+        }
+
+        state.party.channel = new BroadcastChannel('nightwatch_party_' + code);
+        state.party.channel.onmessage = (ev) => handlePartyMessage(ev.data);
+
+        state.party.syncInterval = setInterval(async () => {
+          if (!state.party.code) return;
+          const local = readLocalParty(state.party.code);
+          if (local && Array.isArray(local.members)) {
+            if (local.members.length === 0 && !state.party.isHost) {
+              leaveParty(true);
+              showToast('HOST DISBANDED THE PARTY.', 'border-red-500 text-red-200');
+              return;
+            }
+            if (local.chapter && local.chapter !== state.chapter) {
+              selectChapter(local.chapter);
+            }
+            if (JSON.stringify(local.members) !== JSON.stringify(state.party.members)) {
+              state.party.members = local.members.slice(0, 4);
+              renderPartyLobby();
+            }
+            if (local.started && !state.running && elMenuOverlay.style.display !== 'none') {
+              startGame('multi', true);
+            }
+          }
+
+          if (window.CloudSync && window.CloudSync.enabled && !state.running) {
+            try {
+              const snap = await window.CloudSync.getDoc(window.CloudSync.docRef(state.party.code));
+              if (snap.exists()) {
+                const data = snap.data();
+                if (data.chapter && data.chapter !== state.chapter) selectChapter(data.chapter);
+                if (Array.isArray(data.members) && data.members.length > 0) {
+                  let merged = [...data.members];
+                  const me = { id: state.party.playerId, name: state.party.playerName, isBot: false };
+                  if (!merged.some(m => m.id === state.party.playerId) && merged.length < 4) {
+                    merged.push(me);
+                    await window.CloudSync.setDoc(window.CloudSync.docRef(state.party.code), { members: merged }, { merge: true });
+                  }
+                  if (JSON.stringify(merged) !== JSON.stringify(state.party.members)) {
+                    state.party.members = merged.slice(0, 4);
+                    saveLocalParty(state.party.code, { members: state.party.members, started: !!data.started, chapter: state.chapter });
+                    renderPartyLobby();
+                  }
+                }
+                if (data.started && !state.running && elMenuOverlay.style.display !== 'none') {
+                  startGame('multi', true);
+                }
+              }
+            } catch (e) {}
+          }
+
+          if (state.party.isHost && !state.running) {
+            broadcastPartyEvent({ type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+          } else if (!state.party.isHost && !state.running) {
+            const amListed = state.party.members.some(m => m.id === state.party.playerId);
+            if (!amListed || state.party.members.length < 2) {
+              broadcastPartyEvent({
+                type: 'joinRequest',
+                member: { id: state.party.playerId, name: state.party.playerName, isBot: false }
+              });
+            }
+          }
+        }, 900);
+
+        if (window.CloudSync && window.CloudSync.enabled) {
+          const ref = window.CloudSync.docRef(code);
+          state.party.unsubCloud = window.CloudSync.onSnapshot(ref, (snap) => {
+            if (!snap.exists()) {
+              if (!state.party.isHost && state.party.code === code) {
+                leaveParty(true);
+                showToast('HOST DISBANDED THE PARTY.', 'border-red-500 text-red-200');
+              }
+              return;
+            }
+            const data = snap.data();
+            if (data.chapter && data.chapter !== state.chapter) selectChapter(data.chapter);
+            if (Array.isArray(data.members)) {
+              if (!state.party.isHost && data.members.length === 0) {
+                leaveParty(true);
+                showToast('HOST LEFT THE PARTY.', 'border-red-500 text-red-200');
+                return;
+              }
+              const prevCount = state.party.members.length;
+              state.party.members = data.members.slice(0, 4);
+              saveLocalParty(code, { members: state.party.members, started: !!data.started, chapter: state.chapter });
+              if (state.party.members.length > 0 && state.party.members[0].id === state.party.playerId) {
+                state.party.isHost = true;
+              }
+              renderPartyLobby();
+              if (state.party.isHost && state.party.members.length > prevCount) {
+                const newest = state.party.members[state.party.members.length - 1];
+                if (newest && newest.id !== state.party.playerId) {
+                  showToast(`${newest.name} JOINED YOUR PARTY!`, 'border-emerald-400 text-emerald-200');
+                }
+              }
+            }
+            if (data.started && !state.running && elMenuOverlay.style.display !== 'none') {
+              startGame('multi', true);
+            }
+            if (typeof data.lives === 'number' && state.running && data.lives < state.lives) {
+              state.lives = data.lives;
+              updateLivesHUD();
+              trigger3DJumpscare(data.lastEntityType || 'bear');
+              elDamageOverlay.style.opacity = '0.9';
+              setTimeout(() => { elDamageOverlay.style.opacity = '0'; }, 350);
+              audio.jumpScare();
+              showToast(`TEAMMATE BREACHED! TEAM LIVES: ${state.lives}`, 'border-red-500 text-red-100');
+              if (state.lives <= 0) setTimeout(() => endGame(data.lastReason || 'Team eliminated.'), 620);
+            }
+          });
+        }
+      }
+
+      window.addEventListener('storage', (ev) => {
+        if (!state.party.code || ev.key !== 'nw_party_' + state.party.code || !ev.newValue) return;
+        try {
+          const data = JSON.parse(ev.newValue);
+          if (data.chapter && data.chapter !== state.chapter) selectChapter(data.chapter);
+          if (Array.isArray(data.members)) {
+            if (!state.party.isHost && data.members.length === 0) {
+              leaveParty(true);
+              showToast('HOST DISBANDED THE PARTY.', 'border-red-500 text-red-200');
+              return;
+            }
+            const prevCount = state.party.members.length;
+            state.party.members = data.members.slice(0, 4);
+            renderPartyLobby();
+            if (state.party.isHost && state.party.members.length > prevCount) {
+              const newest = state.party.members[state.party.members.length - 1];
+              if (newest && newest.id !== state.party.playerId) {
+                showToast(`${newest.name} JOINED YOUR PARTY!`, 'border-emerald-400 text-emerald-200');
+              }
+            }
+          }
+          if (data.started && !state.running && elMenuOverlay.style.display !== 'none') {
+            startGame('multi', true);
+          }
+        } catch (e) {}
+      });
+
+      function broadcastPartyEvent(payload) {
+        const msg = { sender: state.party.playerId, chapter: state.chapter, ...payload };
+        if (state.party.channel) {
+          state.party.channel.postMessage(msg);
+        }
+        if (state.party.isHost && state.party.guestConns) {
+          state.party.guestConns.forEach(conn => {
+            if (conn && conn.open) {
+              try { conn.send(msg); } catch (e) {}
+            }
+          });
+        } else if (!state.party.isHost && state.party.hostConn && state.party.hostConn.open) {
+          try { state.party.hostConn.send(msg); } catch (e) {}
+        }
+        if (state.party.code) {
+          if (payload.type === 'lobbyUpdate') {
+            saveLocalParty(state.party.code, { members: state.party.members, started: false, chapter: state.chapter });
+          } else if (payload.type === 'startGame') {
+            saveLocalParty(state.party.code, { members: state.party.members, started: true, chapter: state.chapter });
+          } else if (payload.type === 'partyDisbanded') {
+            saveLocalParty(state.party.code, { members: [], started: false });
+          }
+        }
+        if (window.CloudSync && window.CloudSync.enabled && state.party.code) {
+          const ref = window.CloudSync.docRef(state.party.code);
+          if (payload.type === 'lobbyUpdate') {
+            window.CloudSync.setDoc(ref, { members: state.party.members, started: false, lives: 3, chapter: state.chapter }, { merge: true }).catch(() => {});
+          } else if (payload.type === 'startGame') {
+            window.CloudSync.updateDoc(ref, { started: true, lives: 3, chapter: state.chapter }).catch(() => {});
+          } else if (payload.type === 'teamDamage') {
+            window.CloudSync.updateDoc(ref, { lives: payload.lives, lastReason: payload.reason, lastEntityType: payload.entityType || 'bear' }).catch(() => {});
+          }
+        }
+      }
+
+      async function leaveParty(silent = false) {
+        const code = state.party.code;
+        if (!code) return;
+
+        if (state.party.isHost) {
+          broadcastPartyEvent({ type: 'partyDisbanded' });
+          try { localStorage.removeItem('nw_party_' + code); } catch (e) {}
+          if (window.CloudSync && window.CloudSync.enabled) {
+            try {
+              await window.CloudSync.setDoc(window.CloudSync.docRef(code), { members: [], started: false });
+            } catch (e) {}
+          }
+        } else {
+          const remaining = state.party.members.filter(m => m.id !== state.party.playerId);
+          saveLocalParty(code, { members: remaining });
+          broadcastPartyEvent({ type: 'memberLeft', playerId: state.party.playerId });
+          if (window.CloudSync && window.CloudSync.enabled) {
+            try {
+              await window.CloudSync.updateDoc(window.CloudSync.docRef(code), { members: remaining });
+            } catch (e) {}
+          }
+        }
+
+        cleanupNetworkHandles();
+
+        state.party.code = '';
+        state.party.isHost = false;
+        state.party.members = [];
+        document.getElementById('mp-active-lobby').classList.add('hidden');
+        document.getElementById('mp-setup-panel').classList.remove('hidden');
+        if (!silent) {
+          showToast('LEFT PARTY LOBBY.', 'border-zinc-500 text-zinc-200');
+        }
+      }
+
+      function handlePartyMessage(msg) {
+        if (!msg || msg.sender === state.party.playerId) return;
+
+        if (msg.chapter && !state.party.isHost && msg.chapter !== state.chapter) {
+          selectChapter(msg.chapter);
+        }
+
+        if (msg.type === 'pingHost' && state.party.isHost) {
+          broadcastPartyEvent({ type: 'pongHost', members: state.party.members, chapter: state.chapter });
+        } else if (msg.type === 'joinRequest' && state.party.isHost) {
+          if (state.party.members.length < 4 && !state.party.members.some(m => m.id === msg.member.id)) {
+            state.party.members.push(msg.member);
+            renderPartyLobby();
+            broadcastPartyEvent({ type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+            showToast(`${msg.member.name} JOINED YOUR PARTY!`, 'border-emerald-400 text-emerald-200');
+          } else if (state.party.members.some(m => m.id === msg.member.id)) {
+            broadcastPartyEvent({ type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+          }
+        } else if (msg.type === 'memberLeft' && state.party.isHost) {
+          const leftMember = state.party.members.find(m => m.id === msg.playerId);
+          state.party.members = state.party.members.filter(m => m.id !== msg.playerId);
+          renderPartyLobby();
+          broadcastPartyEvent({ type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+          if (leftMember) {
+            showToast(`${leftMember.name} LEFT THE PARTY.`, 'border-amber-400 text-amber-200');
+          }
+        } else if (msg.type === 'partyDisbanded' && !state.party.isHost) {
+          leaveParty(true);
+          showToast('HOST DISBANDED THE PARTY.', 'border-red-500 text-red-200');
+        } else if (msg.type === 'lobbyUpdate') {
+          if (Array.isArray(msg.members) && msg.members.length > 0) {
+            state.party.members = msg.members.slice(0, 4);
+            saveLocalParty(state.party.code, { members: state.party.members, chapter: state.chapter });
+            renderPartyLobby();
+          }
+        } else if (msg.type === 'startGame' && !state.running) {
+          if (msg.chapter) selectChapter(msg.chapter);
+          startGame('multi', true);
+        } else if (msg.type === 'doorClosed' && state.running) {
+          triggerDoorClose(msg.doorKey, true);
+        } else if (msg.type === 'teamDamage' && state.running) {
+          state.lives = msg.lives;
+          updateLivesHUD();
+          trigger3DJumpscare(msg.entityType || 'bear');
+          elDamageOverlay.style.opacity = '0.9';
+          setTimeout(() => { elDamageOverlay.style.opacity = '0'; }, 350);
+          audio.jumpScare();
+          showToast(`TEAMMATE HIT! TEAM LIVES LEFT: ${state.lives}`, 'border-red-500 text-red-100');
+          if (state.lives <= 0) setTimeout(() => endGame(msg.reason), 620);
+        }
+      }
+
+      // =========================================================================
+      // 8. DOORS, ENTITIES, FIRE/PIPES, BLACKOUT & JUMPSCARE LOGIC
+      // =========================================================================
+      function triggerDoorClose(doorKey, fromNetwork = false) {
+        const d = doors[doorKey];
+        if (!d || !state.running) return;
+
+        if (d.closed || d.lockedOut) {
+          audio.doorError();
+          showToast(`${doorKey.toUpperCase()} DOOR LOCKED / BUSY!`, 'border-amber-500/70 text-amber-200');
+          return;
+        }
+
+        // Chapter 2 Hydraulic Pressure Check
+        if (state.chapter === 2 && state.hydraulicPressure < 18) {
+          audio.doorError();
+          showToast('⚠ LOW HYDRAULIC PRESSURE — WAIT FOR RECHARGE!', 'border-cyan-400 text-cyan-200');
+          return;
+        }
+
+        // Boss Void Dash door check (Chapter 1 & Chapter 2)
+        if (state.boss && state.boss.active && state.boss.ability === 'bunny' && state.boss.doorKey === doorKey) {
+          d.closed = true;
+          d.closeTimer = 2.0;
+          d.cooldownTimer = 1.0;
+          if (state.chapter === 2) state.hydraulicPressure = Math.max(0, state.hydraulicPressure - 16);
+          audio.doorSlam();
+          state.cameraShake = 0.22;
+          if (state.mode === 'multi' && !fromNetwork) {
+            broadcastPartyEvent({ type: 'doorClosed', doorKey });
+          }
+
+          state.boss.bunnyHits++;
+          audio.entityBlocked();
+          if (state.boss.bunnyHits >= 5) {
+            state.boss.mesh.visible = false;
+            showToast('BOSS VOID ASSAULT REPELLED (5/5)!', 'border-emerald-400 text-emerald-200');
+            pickNextBossAbility();
+          } else {
+            const otherKeys = ['left', 'front', 'right'].filter(k => k !== doorKey);
+            const nextKey = otherKeys[Math.floor(Math.random() * otherKeys.length)];
+            spawnBunnyVoidTrail(doorKey, nextKey);
+            audio.bunnyVoidDash();
+            state.boss.doorKey = nextKey;
+            placeBossAtDoor(nextKey, 1.35);
+            showToast(`BOSS VOID-SHIFTED TO ${nextKey.toUpperCase()} (${state.boss.bunnyHits}/5)!`, 'border-purple-400 text-purple-200');
+          }
+          return;
+        }
+
+        const threatIndex = state.entities.findIndex(e => e.doorKey === doorKey && e.type !== 'spidery' && e.type !== 'leech');
+        if (threatIndex !== -1) {
+          d.closed = true;
+          d.closeTimer = 2.0;
+          d.cooldownTimer = 1.0;
+          if (state.chapter === 2) state.hydraulicPressure = Math.max(0, state.hydraulicPressure - 22);
+          audio.doorSlam();
+          state.cameraShake = 0.22;
+
+          const ent = state.entities[threatIndex];
+
+          if (ent.type === 'bunny') {
+            ent.blocksRemaining--;
+            audio.entityBlocked();
+            if (ent.blocksRemaining > 0) {
+              const otherKeys = ['left', 'front', 'right'].filter(k => k !== doorKey);
+              const nextKey = otherKeys[Math.floor(Math.random() * otherKeys.length)];
+              spawnBunnyVoidTrail(doorKey, nextKey);
+              audio.bunnyVoidDash();
+
+              ent.doorKey = nextKey;
+              ent.distance = 6.2;
+              if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+              doors[nextKey].hallGroup.add(ent.mesh);
+              ent.mesh.position.set(0, 0, -ent.distance);
+              showToast(`BUNNY VOID-DASHED TO ${nextKey.toUpperCase()}! (${ent.blocksRemaining} BLOCKS LEFT)`, 'border-indigo-400 text-indigo-200');
+            } else {
+              if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+              state.entities.splice(threatIndex, 1);
+              state.repelled++;
+              showToast(`BUNNY BANISHED AT ${doorKey.toUpperCase()} DOOR!`, 'border-emerald-400 text-emerald-200');
+            }
+          } else if (ent.type === 'juggernaut' && ent.blocksRemaining > 1) {
+            ent.blocksRemaining--;
+            ent.distance = 3.2;
+            ent.mesh.position.z = -ent.distance;
+            audio.entityBlocked();
+            showToast(`🛡 JUGGERNAUT STAGGERED AT ${doorKey.toUpperCase()}! SEAL AGAIN WHEN HE ADVANCES!`, 'border-orange-400 text-orange-200');
+          } else {
+            audio.entityBlocked();
+            if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+            state.entities.splice(threatIndex, 1);
+            state.repelled++;
+            showToast(`${ent.name.toUpperCase()} BLOCKED AT ${doorKey.toUpperCase()} DOOR!`, 'border-emerald-400 text-emerald-200');
+          }
+        } else {
+          d.closed = true;
+          d.lockedOut = true;
+          d.closeTimer = 0.5;
+          d.cooldownTimer = 5.0;
+          if (state.chapter === 2) state.hydraulicPressure = Math.max(0, state.hydraulicPressure - 28);
+          audio.doorSlam();
+          setTimeout(() => audio.doorError(), 220);
+          showToast(`FALSE ALARM! ${doorKey.toUpperCase()} DOOR LOCKED FOR 5.0s!`, 'border-red-500 text-red-200');
+        }
+
+        if (state.mode === 'multi' && !fromNetwork) {
+          broadcastPartyEvent({ type: 'doorClosed', doorKey });
+        }
+      }
+
+      function spawnBunnyVoidTrail(fromDoorKey, toDoorKey) {
+        const startPos = doors[fromDoorKey].group.position.clone().setY(1.2);
+        const endPos = doors[toDoorKey].group.position.clone().setY(1.2);
+
+        const trailGroup = new THREE.Group();
+        const orbCount = 14;
+        const orbs = [];
+        for (let i = 0; i < orbCount; i++) {
+          const orb = new THREE.Mesh(
+            new THREE.SphereGeometry(0.11, 8, 8),
+            new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0x6366f1 : 0x09090b, transparent: true, opacity: 0.9 })
+          );
+          const t = i / (orbCount - 1);
+          orb.position.lerpVectors(startPos, endPos, t);
+          orb.position.y += Math.sin(t * Math.PI) * 0.65;
+          trailGroup.add(orb);
+          orbs.push(orb);
+        }
+        scene.add(trailGroup);
+        state.voidTrails.push({ group: trailGroup, orbs, timer: 1.6 });
+      }
+
+      function spawnEntity(forcedType = null) {
+        if (!state.running || (state.boss && state.boss.active)) return;
+        const typesCh1 = ['bear', 'fox', 'robotica', 'bunny', 'spidery', 'wraith', 'mimic', 'crawler', 'pyro', 'siren'];
+        const typesCh2 = ['angler', 'leech', 'juggernaut', 'doppelganger', 'whisperer', 'wraith', 'robotica', 'siren'];
+        const pool = state.chapter === 2 ? typesCh2 : typesCh1;
+        const type = forcedType || pool[Math.floor(Math.random() * pool.length)];
+
+        if (type === 'spidery' || type === 'leech') {
+          if (state.entities.some(e => e.type === 'spidery' || e.type === 'leech')) return;
+          const mesh = createMonsterMesh(type);
+          const angle = Math.random() * Math.PI * 2;
+          mesh.position.set(Math.cos(angle) * 2.5, ROOM_H - 0.16, Math.sin(angle) * 2.5);
+          scene.add(mesh);
+
+          state.entities.push({
+            type,
+            name: type === 'leech' ? 'Leech Swarm' : 'Spidery',
+            doorKey: null,
+            mesh,
+            timer: 13.5,
+            maxTimer: 13.5,
+            angle
+          });
+          audio.spiderScream();
+          showToast(type === 'leech'
+            ? '⚠ LEECH SWARM ON CATWALK! LOOK UP [Q] & THROW HARPOON [2] OR UV PULSE [F]!'
+            : '⚠ SCRATCHING ON THE CEILING! LOOK UP [Q] & USE KNIFE [2]!', 'border-red-500 text-red-200');
+          return;
+        }
+
+        if (type === 'angler') {
+          if (state.entities.some(e => e.type === 'angler')) return;
+          const mesh = createMonsterMesh('angler');
+          mesh.position.set(0, 0.03, -0.85);
+          scene.add(mesh);
+
+          state.entities.push({
+            type: 'angler',
+            name: 'The Angler',
+            doorKey: null,
+            mesh,
+            timer: 11.0,
+            weldHealth: 100
+          });
+          audio.sonarPing();
+          showToast('🌊 GLOWING LURE UNDER FLOOR GRATE! LOOK DOWN [S] & WELD GRATE [3]!', 'border-cyan-400 text-cyan-200');
+          return;
+        }
+
+        if (type === 'wraith') {
+          if (state.entities.some(e => e.type === 'wraith')) return;
+          const mesh = createMonsterMesh('wraith');
+          const angle = (Math.random() - 0.5) * 1.4;
+          mesh.position.set(Math.sin(angle) * 1.9, 0.1, -Math.cos(angle) * 1.9);
+          mesh.lookAt(camera.position.x, 1.1, camera.position.z);
+          scene.add(mesh);
+
+          state.entities.push({
+            type: 'wraith',
+            name: 'Wraith',
+            doorKey: null,
+            mesh,
+            timer: 5.5,
+            maskTime: 0
+          });
+          audio.playPhantomStinger();
+          showToast('👻 WRAITH INSIDE THE ROOM! PUT ON HORROR MASK [4 / M]!', 'border-indigo-400 text-indigo-200');
+          return;
+        }
+
+        if (type === 'crawler') {
+          if (state.entities.some(e => e.type === 'crawler')) return;
+          const mesh = createMonsterMesh('crawler');
+          const startX = (Math.random() - 0.5) * 3.4;
+          mesh.position.set(startX, 0.02, -2.5);
+          scene.add(mesh);
+
+          state.entities.push({
+            type: 'crawler',
+            name: 'Crawler',
+            doorKey: null,
+            mesh,
+            timer: 9.5
+          });
+          audio.playNoise(0.35, 1400, 0.18, 'bandpass');
+          showToast('🕷 VENT CRAWLER ON THE FLOOR! LOOK DOWN [S] & THROW KNIFE [2]!', 'border-emerald-400 text-emerald-200');
+          return;
+        }
+
+        const doorKeys = ['left', 'front', 'right'];
+        const occupiedDoors = new Set(state.entities.filter(e => e.doorKey).map(e => e.doorKey));
+        const freeDoors = doorKeys.filter(k => !occupiedDoors.has(k));
+        if (freeDoors.length === 0) return;
+
+        const doorKey = freeDoors[Math.floor(Math.random() * freeDoors.length)];
+        const mesh = createMonsterMesh(type);
+
+        let distance = 7.4;
+        let speed = 1.15;
+        let name = 'Bear';
+
+        if (type === 'bear') {
+          name = 'Bear';
+          distance = 1.35;
+          speed = 0;
+          audio.playTone(95, 42, 0.35, 'sawtooth', 0.18);
+        } else if (type === 'fox') {
+          name = 'Fox';
+          distance = 7.6;
+          speed = 1.48;
+          audio.playNoise(0.28, 900, 0.16);
+        } else if (type === 'robotica') {
+          name = 'Robotica';
+          distance = 8.4;
+          speed = 3.65;
+          audio.playTone(440, 180, 0.32, 'square', 0.16);
+          showToast(`⚡ HEAVY FOOTSTEPS IN ${doorKey.toUpperCase()} CORRIDOR!`, 'border-sky-400 text-sky-200');
+        } else if (type === 'bunny') {
+          name = 'Bunny';
+          distance = 6.8;
+          speed = 1.25;
+          audio.playTone(160, 80, 0.3, 'triangle', 0.18);
+        } else if (type === 'mimic' || type === 'doppelganger') {
+          name = type === 'doppelganger' ? 'Doppelgänger' : 'Mimic';
+          distance = 1.25;
+          speed = 0;
+          audio.playTone(520, 610, 0.25, 'triangle', 0.14);
+          const mimicAlias = (state.party.members[1] && state.party.members[1].name) || 'GUARD-02';
+          showToast(type === 'doppelganger'
+            ? `👤 "${mimicAlias}" AT ${doorKey.toUpperCase()} WINDOW? IT'S A DOPPELGÄNGER — SHINE UV [1 / F]!`
+            : `👁 MIMIC AT ${doorKey.toUpperCase()} WINDOW! SHINE FLASHLIGHT [1 / F] AT IT!`, 'border-amber-400 text-amber-200');
+        } else if (type === 'juggernaut') {
+          name = 'Juggernaut';
+          distance = 6.8;
+          speed = 0.85;
+          audio.playTone(75, 36, 0.45, 'sawtooth', 0.24);
+          showToast(`🛡 JUGGERNAUT STOMPING IN ${doorKey.toUpperCase()} CORRIDOR! (REQUIRES 2 SEALS)`, 'border-orange-400 text-orange-200');
+        } else if (type === 'whisperer') {
+          name = 'The Whisperer';
+          distance = 2.0;
+          speed = 0;
+          audio.playNoise(0.6, 1200, 0.16, 'bandpass');
+          showToast(`🗣 WHISPERS ECHOING FROM ${doorKey.toUpperCase()} CORRIDOR! SHINE LIGHT THERE!`, 'border-cyan-300 text-cyan-100');
+        } else if (type === 'pyro') {
+          name = 'Pyro';
+          distance = 7.5;
+          speed = 1.55;
+          audio.playNoise(0.32, 600, 0.2, 'lowpass');
+          showToast(`🔥 PYRO APPROACHING ${doorKey.toUpperCase()} DOOR! SEAL IT OR EXPECT FIRE!`, 'border-orange-500 text-orange-200');
+        } else if (type === 'siren') {
+          name = 'Siren';
+          distance = 3.2;
+          speed = 0;
+          audio.playTone(680, 960, 0.5, 'sine', 0.15);
+          showToast(`📡 SIREN CHARGING AT ${doorKey.toUpperCase()} DOOR! SEAL BEFORE SHRIEK!`, 'border-purple-400 text-purple-200');
+        }
+
+        mesh.position.set(0, 0, -distance);
+        doors[doorKey].hallGroup.add(mesh);
+
+        state.entities.push({
+          type,
+          name,
+          doorKey,
+          mesh,
+          distance,
+          speed,
+          attackTimer: type === 'bear' ? 5.6 : (type === 'mimic' || type === 'doppelganger' || type === 'whisperer') ? 7.0 : type === 'siren' ? 6.2 : 0,
+          canTeleport: type === 'fox' && Math.random() < 0.5,
+          teleported: false,
+          blocksRemaining: type === 'bunny' ? 3 : type === 'juggernaut' ? 2 : 1,
+          blindTimer: 0
+        });
+      }
+
+      function spawnRoomFire() {
+        if (state.fireHazard || !state.running) return;
+        const isCh2 = state.chapter === 2;
+        const fireGroup = new THREE.Group();
+        const spots = [
+          new THREE.Vector3(-1.3, 0.2, -1.9),
+          new THREE.Vector3(1.2, 0.2, -1.8),
+          new THREE.Vector3(0.0, 0.2, -2.2)
+        ];
+        const pos = spots[Math.floor(Math.random() * spots.length)];
+        fireGroup.position.copy(pos);
+
+        const flames = [];
+        for (let i = 0; i < 7; i++) {
+          const cone = new THREE.Mesh(
+            new THREE.ConeGeometry(0.18 + Math.random() * 0.12, 0.65 + Math.random() * 0.35, 8),
+            new THREE.MeshBasicMaterial({ color: isCh2 ? (i % 2 === 0 ? 0x06b6d4 : 0x67e8f9) : (i % 2 === 0 ? 0xf97316 : 0xfacc15) })
+          );
+          cone.position.set((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45);
+          fireGroup.add(cone);
+          flames.push(cone);
+        }
+
+        const fireLight = new THREE.PointLight(isCh2 ? 0x06b6d4 : 0xf97316, 2.4, 6.5);
+        fireLight.position.set(0, 0.7, 0);
+        fireGroup.add(fireLight);
+
+        const hitBox = new THREE.Mesh(
+          new THREE.SphereGeometry(0.68, 10, 10),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        hitBox.position.y = 0.4;
+        hitBox.userData = { interactType: 'fire' };
+        fireGroup.add(hitBox);
+        interactiveMeshes.push(hitBox);
+
+        scene.add(fireGroup);
+        state.fireHazard = {
+          group: fireGroup,
+          flames,
+          hitBox,
+          health: 100,
+          burnTimer: 16.0
+        };
+
+        audio.playNoise(0.5, 500, 0.28, 'lowpass');
+        showToast(isCh2
+          ? '💦 COOLANT PIPE RUPTURED! EQUIP ARC WELDER [3] & HOLD CLICK TO SEAL!'
+          : '🔥 ELECTRICAL FIRE IN CONTROL ROOM! EQUIP EXTINGUISHER [3] & HOLD CLICK!',
+          isCh2 ? 'border-cyan-400 text-cyan-200' : 'border-orange-500 text-orange-200');
+      }
+
+      function clearRoomFire() {
+        if (!state.fireHazard) return;
+        const idx = interactiveMeshes.indexOf(state.fireHazard.hitBox);
+        if (idx !== -1) interactiveMeshes.splice(idx, 1);
+        scene.remove(state.fireHazard.group);
+        state.fireHazard = null;
+        state.extinguishing = false;
+      }
+
+      function triggerBlackout() {
+        if (state.blackout || !state.running) return;
+        state.blackout = true;
+        state.blackoutTimer = 11.0;
+        ceilingLight.intensity = 0;
+        emergencyLight.intensity = 0.85;
+        ambientLight.intensity = 0.05;
+        Object.values(doors).forEach(d => { d.hallLight.intensity = 0.12; });
+
+        const badge = document.getElementById('hud-power-badge');
+        badge.textContent = 'POWER: BLACKOUT';
+        badge.className = 'px-2 py-0.5 rounded bg-red-950 border border-red-500 text-red-300 danger-pulse';
+
+        audio.blackoutDown();
+        showToast('⚡ POWER OUTAGE! USE YOUR FLASHLIGHT [1 / F] TO SEE!', 'border-amber-500 text-amber-200');
+      }
+
+      function restorePower() {
+        state.blackout = false;
+        ceilingLight.intensity = 1.05;
+        emergencyLight.intensity = 0;
+        ambientLight.intensity = 0.24;
+        Object.values(doors).forEach(d => { d.hallLight.intensity = 0.85; });
+
+        const badge = document.getElementById('hud-power-badge');
+        badge.textContent = 'POWER: OK';
+        badge.className = 'px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-600/40 text-emerald-300';
+        showToast('⚡ AUXILIARY POWER RESTORED.', 'border-emerald-400 text-emerald-200');
+      }
+
+      function trigger3DJumpscare(entityType = 'bear') {
+        if (state.jumpscare && state.jumpscare.mesh) {
+          camera.remove(state.jumpscare.mesh);
+        }
+        const mesh = createMonsterMesh(entityType);
+        if (entityType === 'spidery' || entityType === 'leech') {
+          mesh.position.set(0, -0.15, -0.78);
+          mesh.rotation.x = Math.PI / 2.2;
+        } else {
+          mesh.position.set(0, -1.62, -0.72);
+          mesh.rotation.y = 0;
+        }
+        camera.add(mesh);
+        state.jumpscare = { mesh, timer: 0.72 };
+      }
+
+      function damagePlayer(reason, entityType = 'bear') {
+        if (!state.running) return;
+        state.lives = Math.max(0, state.lives - 1);
+        state.cameraShake = 0.55;
+        updateLivesHUD();
+        trigger3DJumpscare(entityType);
+
+        elDamageOverlay.style.opacity = '0.92';
+        setTimeout(() => { elDamageOverlay.style.opacity = '0'; }, 380);
+        audio.jumpScare();
+
+        if (state.mode === 'multi') {
+          broadcastPartyEvent({ type: 'teamDamage', lives: state.lives, reason, entityType });
+        }
+
+        if (state.lives <= 0) {
+          setTimeout(() => endGame(reason), 640);
+        } else {
+          showToast(`⚠ BREACH! ${reason} (${state.lives} ${state.lives === 1 ? 'LIFE' : 'LIVES'} LEFT)`, 'border-red-500 text-red-100');
+        }
+      }
+
+      function updateLivesHUD() {
+        const container = document.getElementById('lives-container');
+        const label = document.getElementById('lives-label');
+        label.textContent = state.mode === 'multi' ? 'TEAM LIVES' : 'LIVES';
+        container.innerHTML = '';
+        for (let i = 0; i < state.maxLives; i++) {
+          const active = i < state.lives;
+          const heart = document.createElement('span');
+          heart.className = active
+            ? 'inline-block w-4 h-4 rounded-sm bg-red-500 shadow-[0_0_8px_#ef4444]'
+            : 'inline-block w-4 h-4 rounded-sm bg-zinc-800 border border-zinc-700';
+          container.appendChild(heart);
+        }
+      }
+
+      // =========================================================================
+      // 9. GAME LIFECYCLE, TOOLS & BOSS WAVE MECHANICS
+      // =========================================================================
+      function clearAllEntitiesAndHazards() {
+        state.entities.forEach(e => {
+          if (e.mesh && e.mesh.parent) e.mesh.parent.remove(e.mesh);
+        });
+        state.entities = [];
+
+        state.projectiles.forEach(p => {
+          if (p.mesh && p.mesh.parent) p.mesh.parent.remove(p.mesh);
+        });
+        state.projectiles = [];
+
+        state.voidTrails.forEach(v => {
+          if (v.group && v.group.parent) v.group.parent.remove(v.group);
+        });
+        state.voidTrails = [];
+
+        clearRoomFire();
+        if (state.blackout) restorePower();
+      }
+
+      function startGame(mode, fromNetwork = false) {
+        audio.init();
+        state.mode = mode;
+        state.running = true;
+        state.lives = 3;
+        state.maxLives = 3;
+        state.elapsed = 0;
+        state.repelled = 0;
+        state.hydraulicPressure = 100;
+        state.uvCooldown = 0;
+        state.toxicGasTimer = 0;
+        elToxicOverlay.style.opacity = '0';
+        state.spawnCooldown = 7.5;
+        state.fireCooldown = 24.0;
+        state.blackoutCooldown = 34.0;
+        state.phantomTimer = 7.0;
+        state.cameraShake = 0;
+        state.bossTriggered3 = false;
+        state.bossTriggered10 = false;
+
+        applyChapterVisuals();
+
+        if (state.boss && state.boss.mesh && state.boss.mesh.parent) {
+          state.boss.mesh.parent.remove(state.boss.mesh);
+        }
+        state.boss = null;
+        elBossStruggleUI.classList.add('hidden');
+
+        if (state.jumpscare && state.jumpscare.mesh) {
+          camera.remove(state.jumpscare.mesh);
+          state.jumpscare = null;
+        }
+
+        clearAllEntitiesAndHazards();
+
+        Object.values(doors).forEach(d => {
+          d.closed = false;
+          d.lockedOut = false;
+          d.closeTimer = 0;
+          d.cooldownTimer = 0;
+          d.shutter.position.y = d.openY;
+          d.btnMat.color.setHex(0x10b981);
+          d.btnMat.emissive.setHex(0x059669);
+        });
+
+        state.maskOn = false;
+        elMaskOverlay.classList.add('hidden');
+        document.getElementById('inv-mask-state').textContent = 'OFF [M / 4]';
+        document.getElementById('inv-mask-state').className = 'text-[10px] mono text-zinc-400';
+
+        state.flashlightOn = true;
+        flashlight.visible = true;
+        selectSlot(0);
+        setLookPreset('front');
+        updateLivesHUD();
+        updateHudPartyList();
+
+        elMenuOverlay.classList.add('hidden');
+        elGameOverOverlay.classList.add('hidden');
+        elHudLayer.classList.remove('hidden');
+
+        if (mode === 'multi' && !fromNetwork) {
+          broadcastPartyEvent({ type: 'startGame' });
+        }
+
+        const startMsg = state.chapter === 2
+          ? 'SUB-LEVEL 14 ONLINE — WATCH HYDRAULIC PRESSURE & GRATES!'
+          : (mode === 'multi' ? 'TEAM SHIFT STARTED — WATCH ALL 3 DOORS!' : 'SHIFT STARTED — SURVIVE THE NIGHT');
+        showToast(startMsg, state.chapter === 2 ? 'border-cyan-400 text-cyan-200' : 'border-amber-400 text-amber-200');
+      }
+
+      function endGame(reason) {
+        state.running = false;
+        state.extinguishing = false;
+        state.maskOn = false;
+        elToxicOverlay.style.opacity = '0';
+        elMaskOverlay.classList.add('hidden');
+        elBossStruggleUI.classList.add('hidden');
+        elHudLayer.classList.add('hidden');
+        elGameOverOverlay.classList.remove('hidden');
+
+        document.getElementById('gameover-title').textContent = state.mode === 'multi' ? 'SQUAD WIPED OUT' : 'YOU DIED';
+        document.getElementById('gameover-reason').textContent = reason;
+        document.getElementById('stat-time').textContent = formatTime(state.elapsed);
+        document.getElementById('stat-repelled').textContent = state.repelled;
+      }
+
+      function selectSlot(slotIndex) {
+        state.selectedSlot = slotIndex;
+        vmFlashlight.visible = slotIndex === 0;
+        vmKnife.visible = slotIndex === 1;
+        vmExtinguisher.visible = slotIndex === 2;
+        vmMask.visible = slotIndex === 3;
+
+        if (slotIndex === 3) {
+          setMaskState(true);
+        } else if (state.maskOn) {
+          setMaskState(false);
+        }
+
+        document.querySelectorAll('.inv-slot').forEach((btn, idx) => {
+          if (idx === slotIndex) {
+            btn.className = 'inv-slot flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-amber-400 bg-zinc-900/95 transition scale-105';
+          } else {
+            btn.className = 'inv-slot flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-700 bg-zinc-900/60 hover:bg-zinc-900 transition';
+          }
+        });
+      }
+
+      function setMaskState(on) {
+        state.maskOn = on;
+        const badge = document.getElementById('inv-mask-state');
+        if (on) {
+          elMaskOverlay.classList.remove('hidden');
+          badge.textContent = 'EQUIPPED [M]';
+          badge.className = 'text-[10px] mono text-emerald-400 font-bold';
+          audio.playNoise(0.2, 420, 0.14, 'lowpass');
+        } else {
+          elMaskOverlay.classList.add('hidden');
+          badge.textContent = 'OFF [M / 4]';
+          badge.className = 'text-[10px] mono text-zinc-400';
+        }
+      }
+
+      function toggleMask() {
+        if (!state.running) return;
+        if (!state.maskOn) {
+          selectSlot(3);
+        } else {
+          setMaskState(false);
+          selectSlot(0);
+        }
+      }
+
+      function toggleFlashlight() {
+        // In Chapter 2, [F] or tapping active Slot 1 triggers a UV Overcharge Pulse if ready
+        if (state.chapter === 2 && state.uvCooldown <= 0) {
+          state.uvCooldown = 5.0;
+          state.flashlightOn = true;
+          flashlight.visible = true;
+          flashlight.color.setHex(0x818cf8);
+          flashlight.intensity = 12.0;
+          audio.uvPulseBlast();
+          setTimeout(() => {
+            flashlight.color.setHex(0xfffbeb);
+            flashlight.intensity = 5.2;
+          }, 420);
+
+          const leechIdx = state.entities.findIndex(e => e.type === 'leech' || e.type === 'spidery');
+          if (leechIdx !== -1) {
+            const leech = state.entities[leechIdx];
+            scene.remove(leech.mesh);
+            state.entities.splice(leechIdx, 1);
+            state.repelled++;
+            showToast('⚡ UV OVERCHARGE VAPORIZED THE LEECH SWARM!', 'border-indigo-400 text-indigo-200');
+          } else {
+            showToast('⚡ UV OVERCHARGE PULSE FIRED!', 'border-indigo-400 text-indigo-200');
+          }
+          return;
+        }
+
+        state.flashlightOn = !state.flashlightOn;
+        flashlight.visible = state.flashlightOn;
+        flLens.material.color.setHex(state.flashlightOn ? 0xfef08a : 0x27272a);
+        const label = document.getElementById('inv-flash-state');
+        label.textContent = state.flashlightOn ? 'BEAM: ON [F]' : 'BEAM: OFF [F]';
+        label.className = state.flashlightOn ? 'text-[10px] mono text-amber-300' : 'text-[10px] mono text-zinc-500';
+        audio.playTone(620, 480, 0.06, 'square', 0.08);
+      }
+
+      function throwKnife(rayDirection) {
+        if (!state.running) return;
+        audio.knifeThrow();
+        const knifeGroup = new THREE.Group();
+        const b = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.28, 4), new THREE.MeshStandardMaterial({ color: 0xf8fafc, metalness: 0.9, roughness: 0.15 }));
+        b.rotation.x = Math.PI / 2;
+        knifeGroup.add(b);
+        knifeGroup.position.copy(camera.position).addScaledVector(rayDirection, 0.45);
+        knifeGroup.lookAt(knifeGroup.position.clone().add(rayDirection));
+        scene.add(knifeGroup);
+
+        state.projectiles.push({
+          mesh: knifeGroup,
+          velocity: rayDirection.clone().multiplyScalar(17.5),
+          life: 1.5
+        });
+      }
+
+      // =========================================================================
+      // 9B. BOSS WAVES (03:00 & 10:00 — OVERLORD / THE ARCHITECT)
+      // =========================================================================
+      function startBossWave(minuteMark) {
+        clearAllEntitiesAndHazards();
+        const bossType = state.chapter === 2 ? 'architect' : 'boss';
+        const bossName = state.chapter === 2 ? 'THE ARCHITECT' : 'OVERLORD BOSS';
+        const bossMesh = createMonsterMesh(bossType);
+        scene.add(bossMesh);
+
+        state.boss = {
+          active: true,
+          bossType,
+          bossName,
+          minuteMark,
+          mesh: bossMesh,
+          abilitiesLeft: 6,
+          ability: null,
+          timer: 0,
+          rushAngle: 0,
+          bunnyHits: 0,
+          doorKey: 'front',
+          searchStage: 'searching',
+          struggleClicks: 0,
+          struggleTimer: 0
+        };
+
+        audio.jumpScare();
+        state.cameraShake = 0.45;
+        showToast(`👑 ${bossName} AWAKENED (${minuteMark}:00)! ALL ENTITIES RETREATED!`, 'border-red-500 text-red-100');
+        pickNextBossAbility();
+      }
+
+      function placeBossAtDoor(doorKey, dist = 1.35) {
+        if (!state.boss) return;
+        const m = state.boss.mesh;
+        if (m.parent) m.parent.remove(m);
+        doors[doorKey].hallGroup.add(m);
+        m.position.set(0, 0, -dist);
+        m.rotation.set(0, 0, 0);
+        m.visible = true;
+      }
+
+      function placeBossInRoom(x, y, z) {
+        if (!state.boss) return;
+        const m = state.boss.mesh;
+        if (m.parent) m.parent.remove(m);
+        scene.add(m);
+        m.position.set(x, y, z);
+        m.lookAt(camera.position.x, y + 1.1, camera.position.z);
+        m.visible = true;
+      }
+
+      function pickNextBossAbility() {
+        const b = state.boss;
+        if (!b || !b.active) return;
+
+        elBossStruggleUI.classList.add('hidden');
+
+        if (b.abilitiesLeft <= 0) {
+          if (b.mesh && b.mesh.parent) b.mesh.parent.remove(b.mesh);
+          state.boss = null;
+          state.repelled += 3;
+          state.spawnCooldown = 3.0;
+          audio.entityBlocked();
+          showToast(`👑 ${b.bossName} BANISHED! ENTITIES RETURNING...`, 'border-emerald-400 text-emerald-200');
+          return;
+        }
+
+        b.abilitiesLeft--;
+        const pool = ['rush', 'bunny', 'search'];
+        const chosen = pool[Math.floor(Math.random() * pool.length)];
+        b.ability = chosen;
+
+        if (chosen === 'rush') {
+          b.timer = 10.0;
+          b.rushAngle = 0;
+          placeBossInRoom(0, 0, -2.2);
+          if (state.chapter === 2) spawnRoomFire();
+          audio.playTone(110, 45, 0.5, 'sawtooth', 0.25);
+          showToast(state.chapter === 2
+            ? `👑 ARCHITECT VENTING TOXIC GAS & RUSHING! WEAR REBREATHER [4 / M]!`
+            : `👑 BOSS RUSH (10s)! PUT ON YOUR HORROR MASK [4 / M] TO HIDE!`, 'border-red-500 text-red-200');
+        } else if (chosen === 'bunny') {
+          b.bunnyHits = 0;
+          const keys = ['left', 'front', 'right'];
+          b.doorKey = keys[Math.floor(Math.random() * keys.length)];
+          placeBossAtDoor(b.doorKey, 1.35);
+          audio.bunnyVoidDash();
+          showToast(`👑 ${b.bossName} SURGING AT ${b.doorKey.toUpperCase()} DOOR! SEAL 5 TIMES!`, 'border-purple-400 text-purple-200');
+        } else if (chosen === 'search') {
+          b.searchStage = 'searching';
+          b.timer = 4.2;
+          placeBossInRoom(1.8, 0, -2.1);
+          audio.playPhantomStinger();
+          showToast(`👑 ${b.bossName} IS SCANNING THE ROOM! WEAR MASK [4 / M]!`, 'border-amber-400 text-amber-200');
+        }
+      }
+
+      function updateBoss(dt) {
+        const b = state.boss;
+        if (!b || !b.active) return;
+
+        if (b.ability === 'rush') {
+          b.timer -= dt;
+          b.rushAngle += dt * 5.8;
+          const rx = Math.sin(b.rushAngle) * 2.45;
+          const rz = Math.cos(b.rushAngle * 1.45) * 2.2 - 0.3;
+          placeBossInRoom(rx, 0, rz);
+
+          if (!state.maskOn && b.timer < 8.4) {
+            damagePlayer(`Caught without Mask during ${b.bossName} Rush!`, b.bossType);
+            b.timer = 0;
+            pickNextBossAbility();
+            return;
+          }
+          if (b.timer <= 0) {
+            showToast(`SURVIVED ${b.bossName} RUSH!`, 'border-emerald-400 text-emerald-200');
+            pickNextBossAbility();
+          }
+        } else if (b.ability === 'bunny') {
+          b.mesh.position.y = Math.abs(Math.sin(state.elapsed * 9)) * 0.14;
+        } else if (b.ability === 'search') {
+          if (b.searchStage === 'searching') {
+            b.timer -= dt;
+            const sx = Math.sin(state.elapsed * 1.8) * 2.1;
+            placeBossInRoom(sx, 0, -2.0);
+            if (b.timer <= 0) {
+              if (state.maskOn) {
+                showToast(`FOOLED ${b.bossName} WITH YOUR MASK!`, 'border-emerald-400 text-emerald-200');
+                pickNextBossAbility();
+              } else {
+                b.searchStage = 'struggle';
+                b.struggleClicks = 0;
+                b.struggleTimer = 3.0;
+                placeBossInRoom(0, -0.35, -0.95);
+                document.getElementById('boss-struggle-title').textContent = `${b.bossName} GRAB!`;
+                elBossStruggleUI.classList.remove('hidden');
+                elBossStruggleCount.textContent = 'TAP 10 TIMES! (3.0s)';
+                audio.jumpScare();
+              }
+            }
+          } else if (b.searchStage === 'struggle') {
+            b.struggleTimer -= dt;
+            state.cameraShake = 0.25;
+            const left = Math.max(0, 10 - b.struggleClicks);
+            elBossStruggleCount.textContent = `TAP ${left} MORE TIMES! (${Math.max(0, b.struggleTimer).toFixed(1)}s)`;
+
+            if (b.struggleClicks >= 10) {
+              elBossStruggleUI.classList.add('hidden');
+              audio.entityBlocked();
+              showToast(`BROKE FREE FROM ${b.bossName}!`, 'border-emerald-400 text-emerald-200');
+              pickNextBossAbility();
+            } else if (b.struggleTimer <= 0) {
+              elBossStruggleUI.classList.add('hidden');
+              damagePlayer(`Crushed by ${b.bossName}!`, b.bossType);
+              pickNextBossAbility();
+            }
+          }
+        }
+      }
+
+      // =========================================================================
+      // 10. SIMULATION UPDATE LOOP
+      // =========================================================================
+      function updateSimulation(dt) {
+        if (state.jumpscare) {
+          state.jumpscare.timer -= dt;
+          if (state.jumpscare.mesh) {
+            state.jumpscare.mesh.position.x = (Math.random() - 0.5) * 0.16;
+            state.jumpscare.mesh.position.y = (state.jumpscare.mesh.position.y > -0.5 ? -0.15 : -1.62) + (Math.random() - 0.5) * 0.14;
+            state.jumpscare.mesh.position.z = -0.68 + Math.sin(state.jumpscare.timer * 48) * 0.12;
+          }
+          if (state.jumpscare.timer <= 0) {
+            if (state.jumpscare.mesh) camera.remove(state.jumpscare.mesh);
+            state.jumpscare = null;
+          }
+        }
+
+        if (!state.running) return;
+
+        state.elapsed += dt;
+        document.getElementById('hud-timer').textContent = formatTime(state.elapsed);
+        document.getElementById('hud-repelled').textContent = state.repelled;
+
+        // Chapter 2 Hydraulic Pressure & UV Cooldown updates
+        if (state.chapter === 2) {
+          state.hydraulicPressure = Math.min(100, state.hydraulicPressure + dt * 6.5);
+          const pBadge = document.getElementById('hud-pressure-badge');
+          const pct = Math.round(state.hydraulicPressure);
+          pBadge.textContent = `PRESSURE: ${pct}%`;
+          pBadge.className = pct < 25
+            ? 'px-2 py-0.5 rounded bg-red-950 border border-red-500 text-red-300 danger-pulse'
+            : 'px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300';
+
+          if (state.uvCooldown > 0) {
+            state.uvCooldown = Math.max(0, state.uvCooldown - dt);
+            document.getElementById('inv-flash-state').textContent = `UV CHARGE: ${state.uvCooldown.toFixed(1)}s`;
+          } else {
+            document.getElementById('inv-flash-state').textContent = 'UV PULSE READY [F]';
+          }
+
+          // Toxic Gas Leak check
+          if (state.toxicGasTimer > 0) {
+            state.toxicGasTimer -= dt;
+            elToxicOverlay.style.opacity = state.maskOn ? '0.2' : '0.85';
+            if (!state.maskOn && state.toxicGasTimer <= 0) {
+              elToxicOverlay.style.opacity = '0';
+              damagePlayer('Inhaled Reactor Toxic Gas — wear Rebreather [4 / M]!', 'architect');
+            } else if (state.toxicGasTimer <= 0) {
+              elToxicOverlay.style.opacity = '0';
+              showToast('☣ REACTOR VENTILATION CLEARED TOXIC GAS.', 'border-emerald-400 text-emerald-200');
+            }
+          }
+        }
+
+        // Trigger Boss Waves at 3 minutes (180s) and 10 minutes (600s)
+        if (!state.bossTriggered3 && state.elapsed >= 180) {
+          state.bossTriggered3 = true;
+          startBossWave(3);
+        } else if (!state.bossTriggered10 && state.elapsed >= 600) {
+          state.bossTriggered10 = true;
+          startBossWave(10);
+        }
+
+        // Update Doors
+        Object.values(doors).forEach(d => {
+          const targetY = d.closed ? d.closedY : d.openY;
+          d.shutter.position.y += (targetY - d.shutter.position.y) * Math.min(1, dt * 18);
+
+          const keyHint = d.key === 'left' ? '[Z]' : d.key === 'front' ? '[X]' : '[C]';
+          const hudBtn = document.getElementById(`hud-door-${d.key}`);
+          if (d.closed) {
+            d.closeTimer -= dt;
+            if (d.closeTimer <= 0) d.closed = false;
+            d.btnMat.color.setHex(0xf59e0b);
+            d.btnMat.emissive.setHex(0xd97706);
+            hudBtn.innerHTML = `${keyHint} ${d.key.toUpperCase()} DOOR: <span class="text-amber-400 font-bold">SEALED</span>`;
+          } else if (d.cooldownTimer > 0) {
+            d.cooldownTimer -= dt;
+            if (d.cooldownTimer <= 0) {
+              d.cooldownTimer = 0;
+              d.lockedOut = false;
+            }
+            d.btnMat.color.setHex(0xef4444);
+            d.btnMat.emissive.setHex(0xb91c1c);
+            hudBtn.innerHTML = `${keyHint} ${d.key.toUpperCase()} DOOR: <span class="text-red-400 font-bold">${d.lockedOut ? 'JAMMED' : 'RECHARGE'} ${d.cooldownTimer.toFixed(1)}s</span>`;
+          } else {
+            d.btnMat.color.setHex(0x10b981);
+            d.btnMat.emissive.setHex(0x059669);
+            hudBtn.innerHTML = `${keyHint} ${d.key.toUpperCase()} DOOR: <span class="text-emerald-400 font-bold">READY</span>`;
+          }
+        });
+
+        // If Boss Wave is active, pause normal entity/hazard spawns and update Boss
+        if (state.boss && state.boss.active) {
+          updateBoss(dt);
+          return;
+        }
+
+        // Ambient Scare Stingers
+        state.phantomTimer -= dt;
+        if (state.phantomTimer <= 0) {
+          state.phantomTimer = 7.5 + Math.random() * 11.0;
+          audio.playPhantomStinger();
+          if (Math.random() < 0.35) {
+            elStaticOverlay.style.opacity = '0.5';
+            setTimeout(() => { elStaticOverlay.style.opacity = '0'; }, 140);
+          }
+        }
+
+        // Spawn Timers
+        const difficultyScale = Math.min(2.1, 1 + state.elapsed / 120);
+        state.spawnCooldown -= dt * difficultyScale;
+        if (state.spawnCooldown <= 0) {
+          spawnEntity();
+          state.spawnCooldown = Math.max(4.4, 9.8 - state.elapsed * 0.025);
+        }
+
+        state.fireCooldown -= dt;
+        if (state.fireCooldown <= 0) {
+          spawnRoomFire();
+          state.fireCooldown = 28 + Math.random() * 14;
+        }
+
+        state.blackoutCooldown -= dt;
+        if (state.blackoutCooldown <= 0) {
+          if (state.chapter === 2 && Math.random() < 0.5 && state.toxicGasTimer <= 0) {
+            state.toxicGasTimer = 7.5;
+            audio.playNoise(0.5, 900, 0.24, 'bandpass');
+            showToast('☣ REACTOR TOXIC GAS LEAK! EQUIP REBREATHER MASK [4 / M]!', 'border-emerald-400 text-emerald-200');
+          } else {
+            triggerBlackout();
+          }
+          state.blackoutCooldown = 36 + Math.random() * 16;
+        }
+
+        if (state.blackout) {
+          state.blackoutTimer -= dt;
+          emergencyLight.intensity = 0.55 + Math.sin(state.elapsed * 9) * 0.35;
+          if (state.blackoutTimer <= 0) restorePower();
+        }
+
+        // Update Active Entities
+        for (let i = state.entities.length - 1; i >= 0; i--) {
+          const ent = state.entities[i];
+
+          if (ent.type === 'spidery' || ent.type === 'leech') {
+            ent.timer -= dt;
+            ent.angle += dt * 1.1;
+            const radius = Math.max(0.25, (ent.timer / ent.maxTimer) * 2.5);
+            ent.mesh.position.x = Math.cos(ent.angle) * radius;
+            ent.mesh.position.z = Math.sin(ent.angle) * radius;
+            ent.mesh.rotation.y = -ent.angle;
+
+            if (ent.timer <= 0) {
+              scene.remove(ent.mesh);
+              state.entities.splice(i, 1);
+              damagePlayer(ent.type === 'leech' ? 'Leech Swarm dropped from the catwalk!' : 'Spidery dropped from the ceiling!', ent.type);
+            }
+            continue;
+          }
+
+          if (ent.type === 'angler') {
+            ent.timer -= dt;
+            ent.mesh.position.x = Math.sin(state.elapsed * 3.5) * 0.35;
+            if (state.extinguishing && state.selectedSlot === 2 && state.lookPitch < -0.55) {
+              ent.weldHealth -= dt * 65;
+              if (Math.random() < 0.4) audio.arcWeldBuzz();
+              if (ent.weldHealth <= 0) {
+                scene.remove(ent.mesh);
+                state.entities.splice(i, 1);
+                state.repelled++;
+                showToast('⚡ ARC WELDER ELECTROCUTED THE ANGLER!', 'border-cyan-400 text-cyan-200');
+                continue;
+              }
+            }
+            if (ent.timer <= 0) {
+              scene.remove(ent.mesh);
+              state.entities.splice(i, 1);
+              damagePlayer('The Angler dragged you through the floor grate!', 'angler');
+            }
+            continue;
+          }
+
+          if (ent.type === 'wraith') {
+            ent.timer -= dt;
+            ent.mesh.position.y = 0.1 + Math.sin(state.elapsed * 4) * 0.08;
+            if (state.maskOn) {
+              ent.maskTime += dt;
+              if (ent.maskTime >= 1.8) {
+                scene.remove(ent.mesh);
+                state.entities.splice(i, 1);
+                state.repelled++;
+                audio.entityBlocked();
+                showToast('WRAITH LOST SIGHT OF YOU AND VANISHED!', 'border-emerald-400 text-emerald-200');
+                continue;
+              }
+            }
+            if (ent.timer <= 0) {
+              scene.remove(ent.mesh);
+              state.entities.splice(i, 1);
+              damagePlayer('Wraith drained your soul — wear Mask [4 / M]!', 'wraith');
+            }
+            continue;
+          }
+
+          if (ent.type === 'crawler') {
+            ent.timer -= dt;
+            ent.mesh.position.x += Math.sin(state.elapsed * 5) * dt * 0.6;
+            ent.mesh.position.z += dt * 0.32;
+            if (ent.timer <= 0 || ent.mesh.position.z >= 0.25) {
+              scene.remove(ent.mesh);
+              state.entities.splice(i, 1);
+              damagePlayer('Vent Crawler bit you — look DOWN [S] & use Knife [2]!', 'crawler');
+            }
+            continue;
+          }
+
+          if (ent.type === 'bear') {
+            ent.attackTimer -= dt;
+            ent.mesh.position.y = Math.sin(state.elapsed * 10) * 0.03;
+            if (ent.attackTimer <= 0) {
+              if (doors[ent.doorKey].closed) {
+                if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+                state.entities.splice(i, 1);
+                state.repelled++;
+                audio.entityBlocked();
+              } else {
+                if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+                state.entities.splice(i, 1);
+                damagePlayer(`Bear breached the ${ent.doorKey.toUpperCase()} Blast Door!`, 'bear');
+              }
+            }
+            continue;
+          }
+
+          if (ent.type === 'mimic' || ent.type === 'doppelganger' || ent.type === 'whisperer') {
+            ent.attackTimer -= dt;
+            const doorLookYaw = ent.doorKey === 'front' ? 0 : ent.doorKey === 'left' ? Math.PI / 2 : -Math.PI / 2;
+            const yawDiff = Math.abs(Math.atan2(Math.sin(state.lookYaw - doorLookYaw), Math.cos(state.lookYaw - doorLookYaw)));
+            if (state.flashlightOn && yawDiff < 0.42) {
+              ent.blindTimer += dt;
+              ent.mesh.position.x = (Math.random() - 0.5) * 0.08;
+              if (ent.blindTimer >= 1.5) {
+                if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+                state.entities.splice(i, 1);
+                state.repelled++;
+                audio.entityBlocked();
+                showToast(`${ent.name.toUpperCase()} BANISHED AT ${ent.doorKey.toUpperCase()} DOOR!`, 'border-emerald-400 text-emerald-200');
+                continue;
+              }
+            }
+            if (ent.attackTimer <= 0) {
+              if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+              state.entities.splice(i, 1);
+              damagePlayer(`${ent.name} lunged through the ${ent.doorKey.toUpperCase()} window!`, ent.type);
+            }
+            continue;
+          }
+
+          if (ent.type === 'siren') {
+            ent.attackTimer -= dt;
+            ent.mesh.scale.setScalar(1 + Math.sin(state.elapsed * 22) * 0.04);
+            if (ent.attackTimer <= 0) {
+              if (doors[ent.doorKey].closed) {
+                if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+                state.entities.splice(i, 1);
+                state.repelled++;
+                audio.entityBlocked();
+                showToast(`SIREN SHRIEK MUFFLED AT ${ent.doorKey.toUpperCase()} DOOR!`, 'border-emerald-400 text-emerald-200');
+              } else {
+                if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+                state.entities.splice(i, 1);
+                triggerBlackout();
+                showToast(`📡 SIREN SHATTERED THE POWER GRID!`, 'border-purple-400 text-purple-200');
+              }
+            }
+            continue;
+          }
+
+          // Hallway movers (Fox, Robotica, Bunny, Pyro, Juggernaut)
+          ent.distance -= ent.speed * dt;
+          ent.mesh.position.z = -ent.distance;
+          ent.mesh.position.y = Math.abs(Math.sin(state.elapsed * (ent.type === 'robotica' ? 18 : 9))) * 0.08;
+
+          if (ent.type === 'fox' && ent.canTeleport && !ent.teleported && ent.distance < 4.5 && ent.distance > 2.2) {
+            ent.teleported = true;
+            const otherDoors = ['left', 'front', 'right'].filter(k => k !== ent.doorKey);
+            const newDoor = otherDoors[Math.floor(Math.random() * otherDoors.length)];
+            if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+            ent.doorKey = newDoor;
+            doors[newDoor].hallGroup.add(ent.mesh);
+            ent.mesh.position.set(0, 0, -ent.distance);
+            audio.foxTeleport();
+            elStaticOverlay.style.opacity = '0.65';
+            setTimeout(() => { elStaticOverlay.style.opacity = '0'; }, 160);
+            showToast(`⚡ FOX TELEPORTED TO ${newDoor.toUpperCase()} CORRIDOR!`, 'border-amber-400 text-amber-200');
+          }
+
+          if (ent.distance <= 0.85) {
+            if (doors[ent.doorKey].closed) {
+              if (ent.type === 'bunny' && ent.blocksRemaining > 1) {
+                ent.blocksRemaining--;
+                const otherKeys = ['left', 'front', 'right'].filter(k => k !== ent.doorKey);
+                const nextKey = otherKeys[Math.floor(Math.random() * otherKeys.length)];
+                spawnBunnyVoidTrail(ent.doorKey, nextKey);
+                audio.bunnyVoidDash();
+                if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+                ent.doorKey = nextKey;
+                ent.distance = 6.2;
+                doors[nextKey].hallGroup.add(ent.mesh);
+              } else if (ent.type === 'juggernaut' && ent.blocksRemaining > 1) {
+                ent.blocksRemaining--;
+                ent.distance = 3.2;
+                audio.entityBlocked();
+                showToast(`🛡 JUGGERNAUT PUSHED BACK — SEAL ${ent.doorKey.toUpperCase()} ONE MORE TIME!`, 'border-orange-400 text-orange-200');
+              } else {
+                if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+                state.entities.splice(i, 1);
+                state.repelled++;
+                audio.entityBlocked();
+              }
+            } else {
+              if (ent.mesh.parent) ent.mesh.parent.remove(ent.mesh);
+              state.entities.splice(i, 1);
+              if (ent.type === 'pyro') {
+                spawnRoomFire();
+                showToast(`🔥 PYRO IGNITED THE CONTROL ROOM!`, 'border-orange-500 text-orange-200');
+              } else {
+                damagePlayer(`${ent.name} breached the ${ent.doorKey.toUpperCase()} Blast Door!`, ent.type);
+              }
+            }
+          }
+        }
+
+        // Update Bunny Void Trails
+        for (let i = state.voidTrails.length - 1; i >= 0; i--) {
+          const vt = state.voidTrails[i];
+          vt.timer -= dt;
+          vt.orbs.forEach(o => {
+            o.material.opacity = Math.max(0, vt.timer / 1.6);
+            o.scale.setScalar(0.6 + (vt.timer / 1.6) * 0.6);
+          });
+          if (vt.timer <= 0) {
+            scene.remove(vt.group);
+            state.voidTrails.splice(i, 1);
+          }
+        }
+
+        // Update Thrown Knives (World-Space Hit Detection for ALL Entities)
+        const entWorldPos = new THREE.Vector3();
+        for (let i = state.projectiles.length - 1; i >= 0; i--) {
+          const p = state.projectiles[i];
+          p.life -= dt;
+          p.mesh.position.addScaledVector(p.velocity, dt);
+          p.mesh.rotation.z += dt * 18;
+
+          let hitEntityIdx = -1;
+          for (let j = 0; j < state.entities.length; j++) {
+            const candidate = state.entities[j];
+            if (!candidate.mesh) continue;
+            candidate.mesh.getWorldPosition(entWorldPos);
+            // Adjust vertical center for upright humanoid/corridor monsters
+            if (candidate.doorKey || candidate.type === 'wraith') {
+              entWorldPos.y += 1.05;
+            }
+            const hitRadius = (candidate.type === 'spidery' || candidate.type === 'leech' || candidate.type === 'crawler' || candidate.type === 'angler') ? 1.15 : 1.25;
+            if (entWorldPos.distanceTo(p.mesh.position) < hitRadius) {
+              hitEntityIdx = j;
+              break;
+            }
+          }
+
+          if (hitEntityIdx !== -1) {
+            const target = state.entities[hitEntityIdx];
+            scene.remove(p.mesh);
+            state.projectiles.splice(i, 1);
+
+            if (target.type === 'spidery' || target.type === 'leech' || target.type === 'crawler' || target.type === 'angler') {
+              if (target.mesh.parent) target.mesh.parent.remove(target.mesh);
+              state.entities.splice(hitEntityIdx, 1);
+              state.repelled++;
+              audio.spiderScream();
+              showToast(`🎯 DIRECT HIT! ${target.name.toUpperCase()} ELIMINATED!`, 'border-emerald-400 text-emerald-200');
+            } else if (target.type === 'wraith') {
+              target.timer += 1.8;
+              audio.entityBlocked();
+              showToast('⚔ KNIFE PASSED THROUGH WRAITH — WEAR MASK [4 / M]!', 'border-indigo-400 text-indigo-200');
+            } else {
+              // Stagger & knock back hallway/doorway entities
+              target.hp = (target.hp || 2) - 1;
+              audio.entityBlocked();
+              if (target.hp <= 0) {
+                if (target.mesh.parent) target.mesh.parent.remove(target.mesh);
+                state.entities.splice(hitEntityIdx, 1);
+                state.repelled++;
+                showToast(`🎯 KNIFE STRIKE REPELLED ${target.name.toUpperCase()}!`, 'border-emerald-400 text-emerald-200');
+              } else {
+                if (target.distance) target.distance = Math.min(8.2, target.distance + 2.2);
+                if (target.attackTimer) target.attackTimer += 2.2;
+                showToast(`⚔ HIT ${target.name.toUpperCase()}! STAGGERED (1 HIT LEFT)`, 'border-amber-400 text-amber-200');
+              }
+            }
+            continue;
+          }
+
+          if (p.life <= 0) {
+            scene.remove(p.mesh);
+            state.projectiles.splice(i, 1);
+          }
+        }
+
+        // Update Fire / Burst Coolant Pipe Hazard
+        if (state.fireHazard) {
+          const fh = state.fireHazard;
+          fh.burnTimer -= dt;
+          fh.flames.forEach((f, idx) => {
+            f.scale.y = 0.85 + Math.sin(state.elapsed * 16 + idx) * 0.3;
+          });
+
+          if (state.chapter === 2) {
+            reactorWaterMesh.position.y = 0.04 + (1 - fh.burnTimer / 16.0) * 0.42;
+          }
+
+          if (state.extinguishing && state.selectedSlot === 2) {
+            fh.health -= dt * 42;
+            if (Math.random() < 0.35) {
+              if (state.chapter === 2) audio.arcWeldBuzz();
+              else audio.extinguisherHiss();
+            }
+            if (fh.health <= 0) {
+              clearRoomFire();
+              reactorWaterMesh.position.y = 0.04;
+              state.repelled++;
+              showToast(state.chapter === 2 ? '⚡ COOLANT PIPE WELDED SHUT!' : '🧯 ROOM FIRE EXTINGUISHED!', 'border-emerald-400 text-emerald-200');
+            }
+          }
+
+          if (state.fireHazard && fh.burnTimer <= 0) {
+            clearRoomFire();
+            reactorWaterMesh.position.y = 0.04;
+            damagePlayer(state.chapter === 2 ? 'Drowned by flooded reactor coolant!' : 'Suffocated by unchecked Room Fire!', state.chapter === 2 ? 'architect' : 'pyro');
+          }
+        }
+      }
+
+      // =========================================================================
+      // 11. CAMERA LOOK, RAYCASTING & INPUT HANDLERS
+      // =========================================================================
+      function setLookPreset(dir) {
+        if (dir === 'front') { state.lookTargetYaw = 0; state.lookTargetPitch = 0; }
+        else if (dir === 'left') { state.lookTargetYaw = Math.PI / 2; state.lookTargetPitch = 0; }
+        else if (dir === 'right') { state.lookTargetYaw = -Math.PI / 2; state.lookTargetPitch = 0; }
+        else if (dir === 'up') { state.lookTargetPitch = 1.18; }
+        else if (dir === 'down') { state.lookTargetPitch = -0.95; }
+      }
+
+      function formatTime(sec) {
+        const m = Math.floor(sec / 60);
+        const s = Math.floor(sec % 60);
+        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      }
+
+      const raycaster = new THREE.Raycaster();
+      const pointerNDC = new THREE.Vector2();
+
+      function updatePointerNDC(clientX, clientY) {
+        pointerNDC.x = (clientX / window.innerWidth) * 2 - 1;
+        pointerNDC.y = -(clientY / window.innerHeight) * 2 + 1;
+      }
+
+      function handleWorldClick(clientX, clientY) {
+        if (!state.running) return;
+
+        // Boss Grab Struggle Rapid Clicks
+        if (state.boss && state.boss.active && state.boss.ability === 'search' && state.boss.searchStage === 'struggle') {
+          state.boss.struggleClicks++;
+          audio.playTone(320 + state.boss.struggleClicks * 45, 220, 0.08, 'square', 0.16);
+          return;
+        }
+
+        updatePointerNDC(clientX, clientY);
+        raycaster.setFromCamera(pointerNDC, camera);
+
+        if (state.selectedSlot === 1) {
+          throwKnife(raycaster.ray.direction.clone());
+          return;
+        }
+
+        const hits = raycaster.intersectObjects(interactiveMeshes, false);
+        if (hits.length > 0) {
+          const hitObj = hits[0].object;
+          if (hitObj.userData.interactType === 'doorButton') {
+            triggerDoorClose(hitObj.userData.doorKey);
+            return;
+          }
+        }
+      }
+
+      canvas.addEventListener('pointerdown', (e) => {
+        if (!state.running) return;
+        state.isDragging = true;
+        state.dragStartX = e.clientX;
+        state.dragStartY = e.clientY;
+        state.pointerDownPos = { x: e.clientX, y: e.clientY };
+
+        if (state.selectedSlot === 2) {
+          if (state.fireHazard) {
+            updatePointerNDC(e.clientX, e.clientY);
+            raycaster.setFromCamera(pointerNDC, camera);
+            const hits = raycaster.intersectObject(state.fireHazard.hitBox, false);
+            if (hits.length > 0) state.extinguishing = true;
+          }
+          if (state.chapter === 2 && state.lookPitch < -0.55) {
+            state.extinguishing = true;
+          }
+        }
+      });
+
+      window.addEventListener('pointermove', (e) => {
+        if (!state.running) return;
+
+        if (state.isDragging) {
+          const dx = e.clientX - state.dragStartX;
+          const dy = e.clientY - state.dragStartY;
+          state.dragStartX = e.clientX;
+          state.dragStartY = e.clientY;
+
+          const sens = e.pointerType === 'touch' ? 0.0135 : 0.0045;
+          state.lookTargetYaw -= dx * sens;
+          state.lookTargetPitch = Math.max(-1.05, Math.min(1.25, state.lookTargetPitch - dy * sens));
+        }
+
+        updatePointerNDC(e.clientX, e.clientY);
+        raycaster.setFromCamera(pointerNDC, camera);
+        const hits = raycaster.intersectObjects(interactiveMeshes, false);
+        if (hits.length > 0) {
+          const type = hits[0].object.userData.interactType;
+          elContextPrompt.textContent = type === 'doorButton'
+            ? `SEAL ${hits[0].object.userData.doorKey.toUpperCase()} BLAST DOOR`
+            : (state.chapter === 2 ? 'HOLD CLICK WITH ARC WELDER [3]' : 'HOLD CLICK WITH EXTINGUISHER [3]');
+          elContextPrompt.style.opacity = '1';
+        } else if (state.selectedSlot === 1) {
+          elContextPrompt.textContent = state.chapter === 2 ? 'TAP TO THROW HARPOON KNIFE' : 'TAP TO THROW TACTICAL KNIFE';
+          elContextPrompt.style.opacity = '0.85';
+        } else {
+          elContextPrompt.style.opacity = '0';
+        }
+      });
+
+      window.addEventListener('pointerup', (e) => {
+        state.extinguishing = false;
+        if (!state.isDragging) return;
+        state.isDragging = false;
+        const dist = Math.hypot(e.clientX - state.pointerDownPos.x, e.clientY - state.pointerDownPos.y);
+        if (dist < 26) {
+          handleWorldClick(e.clientX, e.clientY);
+        }
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (!state.running) return;
+        const k = e.key.toLowerCase();
+        if (k === 'a' || e.key === 'ArrowLeft') setLookPreset('left');
+        else if (k === 'd' || e.key === 'ArrowRight') setLookPreset('right');
+        else if (k === 'w' || e.key === 'ArrowUp') setLookPreset('front');
+        else if (k === 'q') setLookPreset('up');
+        else if (k === 's' || e.key === 'ArrowDown') setLookPreset('down');
+        else if (k === 'z') triggerDoorClose('left');
+        else if (k === 'x') triggerDoorClose('front');
+        else if (k === 'c') triggerDoorClose('right');
+        else if (k === '1') selectSlot(0);
+        else if (k === '2') selectSlot(1);
+        else if (k === '3') selectSlot(2);
+        else if (k === '4') selectSlot(3);
+        else if (k === 'm') toggleMask();
+        else if (k === 'f') toggleFlashlight();
+      });
+
+      // UI Button Bindings
+      document.getElementById('btn-select-ch1').addEventListener('click', () => selectChapter(1));
+      document.getElementById('btn-select-ch2').addEventListener('click', () => selectChapter(2));
+
+      document.getElementById('btn-start-single').addEventListener('click', () => startGame('single'));
+
+      document.getElementById('btn-open-multi').addEventListener('click', () => {
+        document.getElementById('menu-home').classList.add('hidden');
+        document.getElementById('menu-multiplayer').classList.remove('hidden');
+      });
+
+      document.getElementById('btn-back-home').addEventListener('click', () => {
+        if (state.party.code) leaveParty(true);
+        document.getElementById('menu-multiplayer').classList.add('hidden');
+        document.getElementById('menu-home').classList.remove('hidden');
+      });
+
+      document.getElementById('btn-toggle-guide').addEventListener('click', () => {
+        document.getElementById('survival-guide').classList.toggle('hidden');
+      });
+
+      document.getElementById('btn-create-party').addEventListener('click', async () => {
+        if (window.CloudSyncReady) {
+          try { await window.CloudSyncReady; } catch (e) {}
+        }
+        const nameInput = document.getElementById('mp-player-name').value.trim() || 'GUARD-01';
+        state.party.playerName = nameInput;
+        state.party.isHost = true;
+        state.party.code = generatePartyCode();
+        state.party.members = [{ id: state.party.playerId, name: nameInput, isBot: false }];
+
+        saveLocalParty(state.party.code, { members: state.party.members, started: false, chapter: state.chapter });
+        if (window.CloudSync && window.CloudSync.enabled) {
+          try {
+            await window.CloudSync.setDoc(window.CloudSync.docRef(state.party.code), {
+              hostId: state.party.playerId,
+              members: state.party.members,
+              started: false,
+              lives: 3,
+              chapter: state.chapter
+            });
+          } catch (e) {}
+        }
+
+        document.getElementById('mp-setup-panel').classList.add('hidden');
+        document.getElementById('mp-active-lobby').classList.remove('hidden');
+        renderPartyLobby();
+        await setupPartySync(state.party.code);
+        broadcastPartyEvent({ type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+        showToast(`PARTY CREATED: ${state.party.code}`, 'border-indigo-400 text-indigo-200');
+      });
+
+      document.getElementById('btn-join-party').addEventListener('click', async () => {
+        const joinBtn = document.getElementById('btn-join-party');
+        if (joinBtn.disabled) return;
+
+        if (window.CloudSyncReady) {
+          try { await window.CloudSyncReady; } catch (e) {}
+        }
+        const rawCode = document.getElementById('mp-join-code').value.trim().toUpperCase();
+        if (rawCode.length !== 5) {
+          showToast('ENTER A VALID 5-CHARACTER CODE!', 'border-amber-500 text-amber-200');
+          return;
+        }
+
+        joinBtn.disabled = true;
+        joinBtn.textContent = 'CONNECTING...';
+
+        const nameInput = document.getElementById('mp-player-name').value.trim() || 'GUARD-02';
+        state.party.playerName = nameInput;
+        state.party.isHost = false;
+        state.party.code = rawCode;
+        const myMember = { id: state.party.playerId, name: nameInput, isBot: false };
+
+        let joinedValidRoom = false;
+
+        // 1. Check Firebase Cloud Firestore
+        if (window.CloudSync && window.CloudSync.enabled) {
+          try {
+            const ref = window.CloudSync.docRef(rawCode);
+            const snap = await window.CloudSync.getDoc(ref);
+            if (snap.exists() && Array.isArray(snap.data().members) && snap.data().members.length > 0) {
+              const data = snap.data();
+              if (data.chapter) selectChapter(data.chapter);
+              if (data.members.length >= 4 && !data.members.some(m => m.id === state.party.playerId)) {
+                joinBtn.disabled = false;
+                joinBtn.textContent = 'JOIN PARTY';
+                showToast('PARTY IS FULL (MAX 4 PLAYERS)!', 'border-red-500 text-red-200');
+                state.party.code = '';
+                return;
+              }
+              const filtered = data.members.filter(m => m.id !== state.party.playerId);
+              const updated = [...filtered, myMember];
+              state.party.members = updated;
+              saveLocalParty(rawCode, { members: updated, started: !!data.started, chapter: state.chapter });
+              await window.CloudSync.setDoc(ref, { members: updated }, { merge: true });
+              joinedValidRoom = true;
+            }
+          } catch (e) {}
+        }
+
+        // 2. Check Same-Browser Tabs / localStorage / BroadcastChannel
+        if (!joinedValidRoom) {
+          const localData = readLocalParty(rawCode);
+          if (localData && localData.chapter) selectChapter(localData.chapter);
+          const probedMembers = (localData && Array.isArray(localData.members) && localData.members.length > 0)
+            ? localData.members
+            : await probeLocalTabParty(rawCode);
+
+          if (probedMembers && probedMembers.length > 0) {
+            if (probedMembers.length >= 4 && !probedMembers.some(m => m.id === state.party.playerId)) {
+              joinBtn.disabled = false;
+              joinBtn.textContent = 'JOIN PARTY';
+              showToast('PARTY IS FULL (MAX 4 PLAYERS)!', 'border-red-500 text-red-200');
+              state.party.code = '';
+              return;
+            }
+            const filtered = probedMembers.filter(m => m.id !== state.party.playerId);
+            state.party.members = [...filtered, myMember];
+            saveLocalParty(rawCode, { members: state.party.members, chapter: state.chapter });
+            joinedValidRoom = true;
+          }
+        }
+
+        await setupPartySync(rawCode);
+
+        // 3. Cross-Device WebRTC PeerJS Connection to Host
+        if (!joinedValidRoom) {
+          const peerConnected = await connectPeerGuest(rawCode, myMember);
+          if (peerConnected) {
+            joinedValidRoom = true;
+          }
+        }
+
+        joinBtn.disabled = false;
+        joinBtn.textContent = 'JOIN PARTY';
+
+        if (!joinedValidRoom) {
+          cleanupNetworkHandles();
+          state.party.code = '';
+          state.party.members = [];
+          showToast(`PARTY CODE "${rawCode}" NOT FOUND! CHECK THE HOST'S CODE.`, 'border-red-500 text-red-200');
+          return;
+        }
+
+        broadcastPartyEvent({
+          type: 'joinRequest',
+          member: myMember
+        });
+
+        document.getElementById('mp-setup-panel').classList.add('hidden');
+        document.getElementById('mp-active-lobby').classList.remove('hidden');
+        renderPartyLobby();
+        showToast(`JOINED PARTY ${rawCode}!`, 'border-emerald-400 text-emerald-200');
+      });
+
+      document.getElementById('btn-leave-party').addEventListener('click', () => {
+        leaveParty(false);
+      });
+
+      document.getElementById('btn-copy-code').addEventListener('click', () => {
+        const tempInput = document.createElement('input');
+        tempInput.value = state.party.code;
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
+        showToast(`COPIED CODE: ${state.party.code}`, 'border-indigo-400 text-indigo-200');
+      });
+
+      document.getElementById('btn-add-bot').addEventListener('click', () => {
+        if (!state.party.isHost) {
+          showToast('ONLY THE HOST CAN ADD AI!', 'border-amber-400 text-amber-200');
+          return;
+        }
+        if (state.party.members.length >= 4) {
+          showToast('SQUAD IS FULL (4/4)!', 'border-amber-400 text-amber-200');
+          return;
+        }
+        const botNum = state.party.members.length + 1;
+        state.party.members.push({ id: 'BOT-' + botNum, name: `UNIT-0${botNum} [AI]`, isBot: true });
+        renderPartyLobby();
+        broadcastPartyEvent({ type: 'lobbyUpdate', members: state.party.members, chapter: state.chapter });
+      });
+
+      document.getElementById('btn-start-mp-game').addEventListener('click', () => {
+        if (!state.party.isHost) {
+          showToast('ONLY THE PARTY HOST CAN START THE SHIFT!', 'border-amber-400 text-amber-200');
+          return;
+        }
+        startGame('multi');
+      });
+
+      document.getElementById('btn-return-menu').addEventListener('click', () => {
+        elGameOverOverlay.classList.add('hidden');
+        elMenuOverlay.classList.remove('hidden');
+      });
+
+      document.getElementById('btn-mute-hud').addEventListener('click', (e) => {
+        const isMuted = audio.toggleMute();
+        e.currentTarget.textContent = isMuted ? '🔇 MUTED' : '🔊 SFX';
+      });
+
+      document.querySelectorAll('.look-btn').forEach(btn => {
+        btn.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setLookPreset(btn.dataset.look);
+        });
+      });
+
+      document.querySelectorAll('.door-hud-btn').forEach(btn => {
+        btn.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          btn.blur();
+          triggerDoorClose(btn.dataset.door);
+        });
+      });
+
+      document.querySelectorAll('.inv-slot').forEach(btn => {
+        btn.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          btn.blur();
+          const slotIdx = Number(btn.dataset.slot);
+          if (slotIdx === 0 && state.selectedSlot === 0) {
+            toggleFlashlight();
+          } else if (slotIdx === 3 && state.selectedSlot === 3) {
+            toggleMask();
+          } else {
+            selectSlot(slotIdx);
+          }
+        });
+      });
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // =========================================================================
+      // 12. MAIN RENDER LOOP
+      // =========================================================================
+      let lastTime = performance.now();
+
+      function animate(now) {
+        requestAnimationFrame(animate);
+        const dt = Math.min(0.05, (now - lastTime) / 1000);
+        lastTime = now;
+
+        state.lookYaw += (state.lookTargetYaw - state.lookYaw) * Math.min(1, dt * 12);
+        state.lookPitch += (state.lookTargetPitch - state.lookPitch) * Math.min(1, dt * 12);
+
+        let shakeX = 0, shakeY = 0;
+        if (state.cameraShake > 0) {
+          state.cameraShake = Math.max(0, state.cameraShake - dt * 1.4);
+          shakeX = (Math.random() - 0.5) * state.cameraShake * 0.16;
+          shakeY = (Math.random() - 0.5) * state.cameraShake * 0.16;
+        }
+
+        camera.rotation.y = state.lookYaw + shakeX;
+        camera.rotation.x = state.lookPitch + shakeY;
+
+        handRig.position.y = -0.32 + Math.sin(now * 0.004) * 0.008;
+
+        updateSimulation(dt);
+        renderer.render(scene, camera);
+      }
+
+      requestAnimationFrame(animate);
+    })();
+  </script>
+</body>
+</html>
